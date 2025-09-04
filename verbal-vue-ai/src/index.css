@@ -1,0 +1,166 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Professional Coding Assessment Platform Design System */
+
+@layer base {
+  :root {
+    /* Core Brand Colors */
+    --background: 0 0% 100%;
+    --foreground: 215 25% 15%;
+    
+    /* Tech-forward Primary Palette */
+    --primary: 230 80% 60%;
+    --primary-hover: 230 85% 65%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Professional Secondary */
+    --secondary: 220 15% 96%;
+    --secondary-hover: 220 15% 90%;
+    --secondary-foreground: 215 25% 25%;
+    
+    /* Accent Colors */
+    --accent: 270 70% 65%;
+    --accent-hover: 270 75% 70%;
+    --accent-foreground: 0 0% 100%;
+    
+    /* Success States */
+    --success: 145 60% 50%;
+    --success-foreground: 0 0% 100%;
+    
+    /* Warning & Error */
+    --warning: 35 85% 60%;
+    --warning-foreground: 0 0% 100%;
+    --destructive: 0 75% 60%;
+    --destructive-foreground: 0 0% 100%;
+    
+    /* Neutral Palette */
+    --muted: 220 15% 96%;
+    --muted-foreground: 215 15% 55%;
+    --muted-hover: 220 15% 92%;
+    
+    /* Card & Surface */
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 15%;
+    --card-border: 220 15% 90%;
+    
+    /* Interactive Elements */
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 230 80% 60%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 25% 15%;
+    
+    /* Code Editor Theme */
+    --code-bg: 220 25% 97%;
+    --code-border: 220 15% 85%;
+    --code-foreground: 215 25% 20%;
+    
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(230 80% 60%), hsl(270 70% 65%));
+    --gradient-secondary: linear-gradient(135deg, hsl(220 15% 96%), hsl(220 15% 92%));
+    --gradient-hero: linear-gradient(135deg, hsl(230 80% 60%) 0%, hsl(270 70% 65%) 50%, hsl(310 60% 70%) 100%);
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 3px 0 hsl(220 15% 50% / 0.1);
+    --shadow-md: 0 4px 6px -1px hsl(220 15% 50% / 0.1);
+    --shadow-lg: 0 10px 15px -3px hsl(220 15% 50% / 0.1);
+    --shadow-xl: 0 20px 25px -5px hsl(220 15% 50% / 0.1);
+    --shadow-glow: 0 0 40px hsl(230 80% 60% / 0.3);
+    
+    /* Layout & Spacing */
+    --radius: 0.75rem;
+    --radius-sm: 0.5rem;
+    --radius-lg: 1rem;
+    
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  .dark {
+    /* Dark Mode Colors */
+    --background: 215 25% 8%;
+    --foreground: 0 0% 95%;
+    
+    --primary: 230 80% 60%;
+    --primary-hover: 230 85% 65%;
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 215 25% 12%;
+    --secondary-hover: 215 25% 16%;
+    --secondary-foreground: 0 0% 90%;
+    
+    --accent: 270 70% 65%;
+    --accent-hover: 270 75% 70%;
+    --accent-foreground: 0 0% 100%;
+    
+    --muted: 215 25% 12%;
+    --muted-foreground: 215 15% 65%;
+    --muted-hover: 215 25% 16%;
+    
+    --card: 215 25% 10%;
+    --card-foreground: 0 0% 95%;
+    --card-border: 215 25% 18%;
+    
+    --border: 215 25% 18%;
+    --input: 215 25% 18%;
+    --ring: 230 80% 60%;
+    
+    --code-bg: 215 25% 12%;
+    --code-border: 215 25% 20%;
+    --code-foreground: 0 0% 90%;
+    
+    --popover: 215 25% 10%;
+    --popover-foreground: 0 0% 95%;
+    
+    --success: 145 60% 50%;
+    --warning: 35 85% 60%;
+    --destructive: 0 75% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground font-['Inter'];
+    font-feature-settings: 'cv11', 'ss01';
+    font-variation-settings: 'opsz' 32;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+  
+  code, pre {
+    @apply font-['JetBrains_Mono'];
+  }
+}
+
+@layer components {
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent;
+  }
+  
+  .hero-gradient {
+    background: var(--gradient-hero);
+  }
+  
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-1;
+  }
+  
+  .glass-effect {
+    @apply backdrop-blur-sm bg-white/10 border border-white/20;
+  }
+  
+  .code-editor {
+    @apply bg-code-bg border-code-border text-code-foreground font-mono text-sm;
+  }
+}
