@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: prepstart-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: prepstart-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+
+  fastapi-backend:
+    build: 
+      context: ./fastapi-backend
+      dockerfile: Dockerfile
+    container_name: prepstart-fastapi
+    ports:
+      - "8000:8000"
+    depends_on:
+      - rabbitmq
+    environment:
+      - RABBITMQ_URL=amqp://admin:admin@rabbitmq:5672
+      - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+
+  nodejs-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: prepstart-backend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - mongodb
+      - rabbitmq
+      - fastapi-backend
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/prepstart
+      - RABBITMQ_URL=amqp://admin:admin@rabbitmq:5672
+      - FASTAPI_URL=http://fastapi-backend:8000
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: prepstart-frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - nodejs-backend
+
+volumes:
+  mongodb_data:
