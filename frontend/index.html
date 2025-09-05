@@ -92,10 +92,65 @@
             <!-- Welcome Screen -->
             <div id="welcomeScreen" class="text-center">
                 <h3 class="mb-4">Welcome to your AI Interview</h3>
-                <p class="mb-4">I'll ask you 10 questions to assess your skills and experience. You can respond by speaking or typing.</p>
-                <button class="btn btn-primary btn-lg" onclick="startInterview()">
-                    <i class="fas fa-play me-2"></i>Start Interview
+                <p class="mb-4">Upload your resume, provide job details, and start a personalized 30-minute AI interview experience.</p>
+                <button class="btn btn-primary btn-lg" onclick="showSetupScreen()">
+                    <i class="fas fa-play me-2"></i>Start Setup
                 </button>
+            </div>
+
+            <!-- Setup Screen -->
+            <div id="setupScreen" class="d-none">
+                <h3 class="text-center mb-4">Interview Setup</h3>
+                
+                <!-- Personal Details -->
+                <div class="row mb-4">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Full Name *</label>
+                        <input type="text" class="form-control" id="candidateName" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Email *</label>
+                        <input type="email" class="form-control" id="candidateEmail" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Phone Number</label>
+                        <input type="tel" class="form-control" id="candidatePhone">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Years of Experience</label>
+                        <input type="text" class="form-control" id="candidateExperience" placeholder="e.g., 5 years">
+                    </div>
+                </div>
+
+                <!-- Resume Upload -->
+                <div class="mb-4">
+                    <label class="form-label">Upload Resume *</label>
+                    <input type="file" class="form-control" id="resumeFile" accept=".pdf,.docx,.txt" required>
+                    <div class="form-text">Supported formats: PDF, DOCX, TXT (Max 5MB)</div>
+                    <div id="resumeStatus" class="mt-2"></div>
+                </div>
+
+                <!-- Job Details -->
+                <div class="mb-4">
+                    <label class="form-label">Role/Position *</label>
+                    <input type="text" class="form-control" id="roleName" placeholder="e.g., Senior Software Engineer" required>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label">Job Description</label>
+                    <textarea class="form-control" id="jobDescription" rows="4" placeholder="Paste the job description here or describe the role requirements..."></textarea>
+                    <div class="form-text">This helps generate more relevant questions</div>
+                </div>
+
+                <!-- Setup Actions -->
+                <div class="text-center">
+                    <button class="btn btn-success btn-lg me-3" onclick="setupInterview()" id="setupBtn">
+                        <i class="fas fa-rocket me-2"></i>Start AI Interview
+                    </button>
+                    <button class="btn btn-outline-secondary" onclick="showWelcomeScreen()">
+                        <i class="fas fa-arrow-left me-2"></i>Back
+                    </button>
+                </div>
             </div>
 
             <!-- Interview Screen -->
@@ -103,12 +158,13 @@
                 <!-- Progress -->
                 <div class="progress-container">
                     <div class="d-flex justify-content-between mb-2">
-                        <span>Question <span id="currentQuestionNum">1</span> of <span id="totalQuestions">10</span></span>
-                        <span id="progressPercent">10%</span>
+                        <span>Question <span id="currentQuestionNum">1</span></span>
+                        <span class="badge bg-primary"><i class="fas fa-clock me-1"></i><span id="timeRemaining">30:00</span></span>
                     </div>
                     <div class="progress">
                         <div class="progress-bar" id="progressBar" role="progressbar" style="width: 10%"></div>
                     </div>
+                    <small class="text-muted">Duration: <span id="interviewDuration">0 min</span></small>
                 </div>
 
                 <!-- Question Display -->
@@ -164,8 +220,15 @@
                     <i class="fas fa-check"></i>
                 </div>
                 <h3 class="mb-4">Interview Completed!</h3>
-                <p class="mb-4">Thank you for completing the interview. Your responses have been recorded.</p>
-                <button class="btn btn-primary btn-lg" onclick="startNewInterview()">
+                <div class="alert alert-success">
+                    <strong>Duration:</strong> <span id="finalDuration">30 minutes</span><br>
+                    <strong>Questions Answered:</strong> <span id="totalAnswered">0</span>
+                </div>
+                <p class="mb-4">Thank you for completing the AI interview. Your responses have been recorded and will be reviewed.</p>
+                <button class="btn btn-primary btn-lg me-3" onclick="downloadSummary()">
+                    <i class="fas fa-download me-2"></i>Download Summary
+                </button>
+                <button class="btn btn-outline-primary" onclick="startNewInterview()">
                     <i class="fas fa-redo me-2"></i>Start New Interview
                 </button>
             </div>

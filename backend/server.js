@@ -36,35 +36,29 @@ mongoose.connect(process.env.MONGODB_URI, {
     console.error('MongoDB connection error:', err);
 });
 
-// Interview Session Schema
+// Interview Session Schema - Simplified (only store basic user data)
 const interviewSessionSchema = new mongoose.Schema({
     sessionId: { type: String, required: true, unique: true },
+    candidate: {
+        name: String,
+        email: String,
+        phone: String,
+        experience: String
+    },
+    jobDetails: {
+        role_name: String,
+        job_description: String
+    },
+    resumeText: String, // Resume converted to text for AI processing
     currentQuestionIndex: { type: Number, default: 0 },
-    responses: [{
-        questionIndex: Number,
-        question: String,
-        userResponse: String,
-        timestamp: { type: Date, default: Date.now }
-    }],
     status: { type: String, default: 'active' },
+    startTime: { type: Date, default: Date.now },
+    endTime: Date,
+    totalDuration: Number, // in minutes
     createdAt: { type: Date, default: Date.now }
 });
 
 const InterviewSession = mongoose.model('InterviewSession', interviewSessionSchema);
-
-// Interview questions
-const INTERVIEW_QUESTIONS = [
-    "Tell me about yourself and your background.",
-    "What interests you most about this role?",
-    "Describe a challenging project you've worked on recently.",
-    "How do you handle tight deadlines and pressure?",
-    "What are your greatest strengths and weaknesses?",
-    "Where do you see yourself in the next 5 years?",
-    "Tell me about a time you had to work with a difficult team member.",
-    "How do you stay updated with the latest technology trends?",
-    "Describe a situation where you had to learn something new quickly.",
-    "Why should we hire you for this position?"
-];
 
 // RabbitMQ connection
 let rabbitConnection = null;
@@ -103,20 +97,66 @@ app.get('/', (req, res) => {
     res.json({ message: 'PrepStart AI Interview Backend' });
 });
 
-// Start new interview session
-app.post('/api/start-interview', async (req, res) => {
+// Setup interview with candidate details and resume
+app.post('/api/setup-interview', async (req, res) => {
     try {
+        const { name, email, phone, experience, role_name, job_description, resumeText } = req.body;
+        
         const sessionId = uuidv4();
-        const session = new InterviewSession({ sessionId });
+        const session = new InterviewSession({ 
+            sessionId,
+            candidate: { name, email, phone, experience },
+            jobDetails: { role_name, job_description },
+            resumeText,
+            startTime: new Date()
+        });
+        
         await session.save();
+        
+        // Generate first question using AI
+        const firstQuestionResponse = await axios.post(`${process.env.FASTAPI_URL}/generate-question`, {
+            session_id: sessionId,
+            previous_responses: [],
+            resume_text: resumeText,
+            job_description: job_description,
+            role_name: role_name,
+            question_number: 1
+        });
         
         res.json({
             sessionId,
-            firstQuestion: INTERVIEW_QUESTIONS[0],
-            totalQuestions: INTERVIEW_QUESTIONS.length
+            firstQuestion: firstQuestionResponse.data.question,
+            candidateName: name,
+            roleName: role_name
         });
     } catch (error) {
+        console.error('Setup interview error:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Upload and process resume
+app.post('/api/upload-resume', upload.single('resume'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No resume file provided' });
+        }
+        
+        const formData = new FormData();
+        formData.append('file', new Blob([req.file.buffer]), req.file.originalname);
+        
+        const response = await axios.post(`${process.env.FASTAPI_URL}/upload-resume`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        
+        res.json({
+            resumeText: response.data.text,
+            filename: response.data.filename,
+            status: 'success'
+        });
+    } catch (error) {
+        console.error('Resume upload error:', error);
+        res.status(500).json({ error: 'Failed to process resume' });
     }
 });
 
@@ -139,45 +179,94 @@ app.get('/api/session/:sessionId', async (req, res) => {
     }
 });
 
-// Submit response and get next question
+// Submit response and get next AI-generated question (don't store responses)
 app.post('/api/submit-response', async (req, res) => {
     try {
-        const { sessionId, response } = req.body;
+        const { sessionId, response, currentQuestion, responses = [] } = req.body;
         const session = await InterviewSession.findOne({ sessionId });
         
         if (!session) {
             return res.status(404).json({ error: 'Session not found' });
         }
         
-        // Save current response
-        session.responses.push({
-            questionIndex: session.currentQuestionIndex,
-            question: INTERVIEW_QUESTIONS[session.currentQuestionIndex],
-            userResponse: response
-        });
+        // Check if 30 minutes have passed
+        const currentTime = new Date();
+        const interviewDuration = (currentTime - session.startTime) / (1000 * 60); // minutes
         
-        // Move to next question
-        session.currentQuestionIndex++;
-        
-        let nextQuestion = null;
-        let isComplete = false;
-        
-        if (session.currentQuestionIndex < INTERVIEW_QUESTIONS.length) {
-            nextQuestion = INTERVIEW_QUESTIONS[session.currentQuestionIndex];
-        } else {
+        if (interviewDuration >= 30) {
+            // End interview with feedback question
             session.status = 'completed';
-            isComplete = true;
+            session.endTime = currentTime;
+            session.totalDuration = interviewDuration;
+            await session.save();
+            
+            return res.json({
+                nextQuestion: "Thank you for your time! Do you have any questions or feedback about this interview process?",
+                isComplete: true,
+                isFeedback: true,
+                duration: Math.round(interviewDuration),
+                totalResponses: session.currentQuestionIndex + 1
+            });
         }
         
-        await session.save();
+        // Increment question index (we don't store the actual responses)
+        session.currentQuestionIndex++;
         
-        res.json({
-            nextQuestion,
-            isComplete,
-            currentIndex: session.currentQuestionIndex,
-            totalQuestions: INTERVIEW_QUESTIONS.length
-        });
+        // Prepare responses array for AI context (sent in real-time, not stored)
+        const previousResponses = responses || [];
+        
+        try {
+            // Generate next question using AI with resume + JD + live responses
+            const nextQuestionResponse = await axios.post(`${process.env.FASTAPI_URL}/generate-question`, {
+                session_id: sessionId,
+                previous_responses: previousResponses, // Live responses from frontend
+                resume_text: session.resumeText, // Resume text extracted and converted
+                job_description: session.jobDetails.job_description,
+                role_name: session.jobDetails.role_name,
+                question_number: session.currentQuestionIndex + 1
+            });
+            
+            await session.save();
+            
+            res.json({
+                nextQuestion: nextQuestionResponse.data.question,
+                isComplete: false,
+                currentIndex: session.currentQuestionIndex,
+                duration: Math.round(interviewDuration),
+                remainingTime: Math.max(0, 30 - interviewDuration)
+            });
+            
+        } catch (aiError) {
+            console.error('AI question generation failed:', aiError);
+            
+            // Enhanced contextual fallback system
+            const fallbackQuestions = [
+                `Based on your background, can you tell me more about your experience with ${session.jobDetails.role_name}?`,
+                "What's the most challenging problem you've solved in your career?",
+                "How do you approach learning new technologies or skills?",
+                "Tell me about a time you worked effectively in a team.",
+                "What motivates you in your professional work?",
+                "How do you handle feedback and criticism?",
+                "Describe a project you're particularly proud of.",
+                "What are your career goals for the next few years?",
+                "How do you stay organized and manage your time?",
+                "What questions do you have about this role or our company?"
+            ];
+            
+            const fallbackIndex = Math.min(session.currentQuestionIndex, fallbackQuestions.length - 1);
+            await session.save();
+            
+            res.json({
+                nextQuestion: fallbackQuestions[fallbackIndex],
+                isComplete: false,
+                currentIndex: session.currentQuestionIndex,
+                duration: Math.round(interviewDuration),
+                remainingTime: Math.max(0, 30 - interviewDuration)
+            });
+        }
+        
     } catch (error) {
+        console.error('Submit response error:', error);
         res.status(500).json({ error: error.message });
     }
 });

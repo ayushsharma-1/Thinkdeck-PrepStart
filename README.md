@@ -24,9 +24,22 @@ A real-time AI interview platform that enables two-way communication between use
 
 - Node.js (v16 or higher)
 - Python (v3.8 or higher)
-- MongoDB
-- RabbitMQ
-- AssemblyAI API Key
+- AssemblyAI API Key (https://www.assemblyai.com/)
+- At least one AI provider API key:
+  - OpenAI API Key (https://platform.openai.com/) - Primary
+  - Groq API Key (https://console.groq.com/) - Backup
+  - Google Gemini API Key (https://makersuite.google.com/) - Final fallback
+
+## AI Provider Setup
+
+The platform uses multiple AI providers for robust question generation:
+
+1. **Primary**: OpenAI GPT-3.5-turbo
+2. **Backup**: Groq Llama3-8B  
+3. **Final Fallback**: Google Gemini Pro
+4. **Emergency**: Hardcoded contextual questions
+
+If one provider fails (like quota exceeded), it automatically tries the next one.
 
 ## Setup Instructions
 
