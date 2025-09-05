@@ -94,7 +94,34 @@ async function connectRabbitMQ() {
 
 // Routes
 app.get('/', (req, res) => {
-    res.json({ message: 'PrepStart AI Interview Backend' });
+    res.json({ 
+        message: 'PrepStart AI Interview Backend',
+        status: 'running',
+        version: '1.0.0',
+        services: {
+            mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+            rabbitmq: 'configured',
+            fastapi: process.env.FASTAPI_URL || 'http://localhost:8000'
+        },
+        endpoints: {
+            uploadResume: '/api/upload-resume',
+            setupInterview: '/api/setup-interview',
+            speechToText: '/api/speech-to-text',
+            submitResponse: '/api/submit-response',
+            getSession: '/api/session/:sessionId'
+        }
+    });
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    });
 });
 
 // Setup interview with candidate details and resume

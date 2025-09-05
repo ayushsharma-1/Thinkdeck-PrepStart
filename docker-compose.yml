@@ -19,6 +19,15 @@ services:
       RABBITMQ_DEFAULT_USER: admin
       RABBITMQ_DEFAULT_PASS: admin
 
+  redis:
+    image: redis:7-alpine
+    container_name: prepstart-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
   fastapi-backend:
     build: 
       context: ./fastapi-backend
@@ -54,9 +63,15 @@ services:
       dockerfile: Dockerfile
     container_name: prepstart-frontend
     ports:
-      - "8080:8080"
+      - "3000:3000"
     depends_on:
       - nodejs-backend
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://nodejs-backend:3000
+      - NEXT_PUBLIC_FASTAPI_URL=http://fastapi-backend:8000
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
 
 volumes:
   mongodb_data:
+  redis_data:

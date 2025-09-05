@@ -98,13 +98,13 @@ class AIQuestionGenerator:
                 return None
                 
             response = self.groq_client.chat.completions.create(
-                model="llama-3.1-70b-versatile",  # Updated model
+                model="llama-3.1-8b-instant",  # Updated to supported model
                 messages=[
-                    {"role": "system", "content": "You are an expert technical interviewer. Generate relevant, engaging interview questions."},
+                    {"role": "system", "content": "You are an expert technical interviewer. Generate diverse, engaging interview questions that avoid repetition and explore different aspects of the candidate's experience. Focus on creating unique questions for each interaction."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=150,
-                temperature=0.7
+                max_tokens=200,  # Increased for more detailed questions
+                temperature=0.8  # Increased for more variety
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -119,11 +119,100 @@ class AIQuestionGenerator:
                 return None
                 
             model = genai.GenerativeModel('gemini-1.5-flash')  # Updated model
-            response = model.generate_content(prompt)
+            
+            # Configure generation for more variety
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.9,  # Higher temperature for more variety
+                top_p=0.9,
+                top_k=40,
+                max_output_tokens=200
+            )
+            
+            response = model.generate_content(
+                prompt,
+                generation_config=generation_config
+            )
             return response.text.strip()
         except Exception as e:
             print(f"Gemini error: {e}")
             return None
+    
+    def _extract_key_topics(self, resume_text):
+        """Extract key topics/skills from resume"""
+        resume_lower = resume_text.lower()
+        topics = []
+        
+        # Technical skills
+        tech_skills = ['python', 'javascript', 'java', 'react', 'node', 'sql', 'aws', 'docker', 'kubernetes', 
+                       'machine learning', 'ai', 'data science', 'frontend', 'backend', 'full stack', 'apis', 
+                       'databases', 'cloud', 'devops', 'testing', 'agile', 'scrum']
+        
+        # Domain areas
+        domains = ['leadership', 'management', 'project management', 'team lead', 'architecture', 
+                  'system design', 'performance', 'security', 'scalability', 'analytics']
+        
+        all_keywords = tech_skills + domains
+        
+        for keyword in all_keywords:
+            if keyword in resume_lower:
+                topics.append(keyword)
+        
+        return topics[:10]  # Return top 10 topics
+    
+    def _get_asked_topics(self, previous_responses):
+        """Extract topics already covered in previous questions"""
+        asked_topics = []
+        
+        for response in previous_responses:
+            question = response.get('question', '').lower()
+            
+            # Look for common question patterns
+            if 'experience' in question or 'background' in question:
+                asked_topics.append('experience')
+            if 'project' in question or 'work' in question:
+                asked_topics.append('projects')
+            if 'challenge' in question or 'difficult' in question:
+                asked_topics.append('challenges')
+            if 'team' in question or 'collaborate' in question:
+                asked_topics.append('teamwork')
+            if 'technical' in question or 'technology' in question:
+                asked_topics.append('technical skills')
+            if 'leadership' in question or 'manage' in question:
+                asked_topics.append('leadership')
+        
+        return list(set(asked_topics))  # Remove duplicates
+    
+    def _get_question_focus(self, question_number, role_name, asked_topics):
+        """Determine focus area for current question"""
+        
+        # Define question progression
+        question_focuses = [
+            "introduction and background",
+            "specific technical experience", 
+            "project challenges and problem-solving",
+            "teamwork and collaboration",
+            "leadership and decision-making",
+            "learning and adaptability",
+            "career goals and motivation",
+            "role-specific scenarios",
+            "company culture fit",
+            "final questions and wrap-up"
+        ]
+        
+        # Filter out already asked topics
+        available_focuses = []
+        for focus in question_focuses:
+            focus_keywords = focus.split()
+            if not any(topic in focus or any(keyword in topic for keyword in focus_keywords) for topic in asked_topics):
+                available_focuses.append(focus)
+        
+        # If we have available focuses, use them; otherwise use the standard progression
+        if available_focuses:
+            focus_index = min(question_number - 2, len(available_focuses) - 1)
+            return available_focuses[focus_index]
+        else:
+            focus_index = min(question_number - 2, len(question_focuses) - 1)
+            return question_focuses[focus_index]
     
     def _get_contextual_fallback_question(self, question_number, role_name, resume_text, job_description, previous_responses):
         """Get contextual fallback questions when all AI services fail"""
@@ -203,27 +292,40 @@ class AIQuestionGenerator:
             Keep it professional and conversational. Return only the question.
             """
         else:
+            # Extract key topics from resume to avoid repetition
+            resume_keywords = self._extract_key_topics(resume_text)
+            asked_topics = self._get_asked_topics(previous_responses)
+            
             # Send resume text and previous responses to AI for context
             recent_context = previous_responses[-2:] if len(previous_responses) > 2 else previous_responses
             previous_context = "\n".join([f"Q: {resp.get('question', '')} A: {resp.get('answer', '')}" for resp in recent_context])
             
+            # Create diverse question categories based on question number
+            question_focus = self._get_question_focus(question_number, role_name, asked_topics)
+            
             prompt = f"""
-            You are conducting a {role_name} interview. Generate the next question based on:
+            You are conducting a {role_name} interview. Question #{question_number}.
             
-            Candidate's Resume: {resume_text[:800]}...
+            Candidate's Background: {resume_text[:800]}...
             Job Requirements: {job_description[:400]}...
-            Role: {role_name}
+            Key Skills from Resume: {', '.join(resume_keywords[:5])}
             
-            Recent conversation:
+            Previous Q&A:
             {previous_context}
             
-            Generate a follow-up question that:
-            1. Builds naturally on their previous responses
-            2. Explores skills relevant to {role_name} 
-            3. References their resume experience when appropriate
-            4. Is engaging and professional
+            Topics already covered: {', '.join(asked_topics)}
             
-            Return only the question.
+            Focus Area for this question: {question_focus}
+            
+            Generate a NEW, DIFFERENT question that:
+            1. Focuses on {question_focus}
+            2. AVOIDS repeating topics: {', '.join(asked_topics)}
+            3. Builds naturally on previous responses
+            4. Is specific to {role_name} requirements
+            5. Explores different aspects of their experience
+            6. Is engaging and professional
+            
+            Return ONLY the question, no extra text.
             """
         
         # Try Groq first (Primary AI)

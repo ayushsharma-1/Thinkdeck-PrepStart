@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PrepStart AI Interview</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .interview-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin: 2rem auto;
+            max-width: 800px;
+        }
+        .question-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border-left: 5px solid #667eea;
+        }
+        .recording-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: none;
+            font-size: 2rem;
+            transition: all 0.3s ease;
+        }
+        .recording-btn:not(.recording) {
+            background: #28a745;
+            color: white;
+        }
+        .recording-btn.recording {
+            background: #dc3545;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        .progress-container {
+            margin-bottom: 2rem;
+        }
+        .ai-avatar {
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 2rem;
+            margin: 0 auto 2rem;
+        }
+        .response-area {
+            min-height: 150px;
+            border: 2px dashed #dee2e6;
+            border-radius: 10px;
+            padding: 2rem;
+            background: #f8f9fa;
+        }
+        .speaking {
+            animation: speak 2s infinite;
+        }
+        @keyframes speak {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="interview-container p-4">
+            <!-- Header -->
+            <div class="text-center mb-4">
+                <h1 class="mb-3">PrepStart AI Interview</h1>
+                <div class="ai-avatar" id="aiAvatar">
+                    <i class="fas fa-robot"></i>
+                </div>
+            </div>
+
+            <!-- Welcome Screen -->
+            <div id="welcomeScreen" class="text-center">
+                <h3 class="mb-4">Welcome to your AI Interview</h3>
+                <p class="mb-4">Upload your resume, provide job details, and start a personalized 30-minute AI interview experience.</p>
+                <button class="btn btn-primary btn-lg" onclick="showSetupScreen()">
+                    <i class="fas fa-play me-2"></i>Start Setup
+                </button>
+            </div>
+
+            <!-- Setup Screen -->
+            <div id="setupScreen" class="d-none">
+                <h3 class="text-center mb-4">Interview Setup</h3>
+                
+                <!-- Personal Details -->
+                <div class="row mb-4">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Full Name *</label>
+                        <input type="text" class="form-control" id="candidateName" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Email *</label>
+                        <input type="email" class="form-control" id="candidateEmail" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Phone Number</label>
+                        <input type="tel" class="form-control" id="candidatePhone">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Years of Experience</label>
+                        <input type="text" class="form-control" id="candidateExperience" placeholder="e.g., 5 years">
+                    </div>
+                </div>
+
+                <!-- Resume Upload -->
+                <div class="mb-4">
+                    <label class="form-label">Upload Resume *</label>
+                    <input type="file" class="form-control" id="resumeFile" accept=".pdf,.docx,.txt" required>
+                    <div class="form-text">Supported formats: PDF, DOCX, TXT (Max 5MB)</div>
+                    <div id="resumeStatus" class="mt-2"></div>
+                </div>
+
+                <!-- Job Details -->
+                <div class="mb-4">
+                    <label class="form-label">Role/Position *</label>
+                    <input type="text" class="form-control" id="roleName" placeholder="e.g., Senior Software Engineer" required>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label">Job Description</label>
+                    <textarea class="form-control" id="jobDescription" rows="4" placeholder="Paste the job description here or describe the role requirements..."></textarea>
+                    <div class="form-text">This helps generate more relevant questions</div>
+                </div>
+
+                <!-- Setup Actions -->
+                <div class="text-center">
+                    <button class="btn btn-success btn-lg me-3" onclick="setupInterview()" id="setupBtn">
+                        <i class="fas fa-rocket me-2"></i>Start AI Interview
+                    </button>
+                    <button class="btn btn-outline-secondary" onclick="showWelcomeScreen()">
+                        <i class="fas fa-arrow-left me-2"></i>Back
+                    </button>
+                </div>
+            </div>
+
+            <!-- Interview Screen -->
+            <div id="interviewScreen" class="d-none">
+                <!-- Progress -->
+                <div class="progress-container">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Question <span id="currentQuestionNum">1</span></span>
+                        <span class="badge bg-primary"><i class="fas fa-clock me-1"></i><span id="timeRemaining">30:00</span></span>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar" id="progressBar" role="progressbar" style="width: 10%"></div>
+                    </div>
+                    <small class="text-muted">Duration: <span id="interviewDuration">0 min</span></small>
+                </div>
+
+                <!-- Question Display -->
+                <div class="question-box">
+                    <h4 class="mb-3">
+                        <i class="fas fa-question-circle text-primary me-2"></i>
+                        <span id="currentQuestion">Loading question...</span>
+                    </h4>
+                    <button class="btn btn-outline-primary btn-sm" onclick="speakQuestion()">
+                        <i class="fas fa-volume-up me-1"></i>Speak Question
+                    </button>
+                </div>
+
+                <!-- Response Section -->
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Voice Response</h5>
+                        <div class="text-center mb-3">
+                            <button class="recording-btn" id="recordBtn" onclick="toggleRecording()">
+                                <i class="fas fa-microphone"></i>
+                            </button>
+                        </div>
+                        <p class="text-muted text-center"><small>Click to start/stop recording</small></p>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>Text Response</h5>
+                        <textarea class="form-control" id="textResponse" rows="4" placeholder="Or type your response here..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Transcribed Text -->
+                <div class="response-area mt-3">
+                    <h6>Your Response:</h6>
+                    <div id="transcribedText" class="text-muted">
+                        <i>Your speech will appear here... or type in the text box above</i>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="text-center mt-4">
+                    <button class="btn btn-success btn-lg me-3" onclick="submitResponse()">
+                        <i class="fas fa-arrow-right me-2"></i>Next Question
+                    </button>
+                    <button class="btn btn-outline-secondary" onclick="clearResponse()">
+                        <i class="fas fa-trash me-2"></i>Clear Response
+                    </button>
+                </div>
+            </div>
+
+            <!-- Completion Screen -->
+            <div id="completionScreen" class="d-none text-center">
+                <div class="ai-avatar mb-4">
+                    <i class="fas fa-check"></i>
+                </div>
+                <h3 class="mb-4">Interview Completed!</h3>
+                <div class="alert alert-success">
+                    <strong>Duration:</strong> <span id="finalDuration">30 minutes</span><br>
+                    <strong>Questions Answered:</strong> <span id="totalAnswered">0</span>
+                </div>
+                <p class="mb-4">Thank you for completing the AI interview. Your responses have been recorded and will be reviewed.</p>
+                <button class="btn btn-primary btn-lg me-3" onclick="downloadSummary()">
+                    <i class="fas fa-download me-2"></i>Download Summary
+                </button>
+                <button class="btn btn-outline-primary" onclick="startNewInterview()">
+                    <i class="fas fa-redo me-2"></i>Start New Interview
+                </button>
+            </div>
+
+            <!-- Loading Overlay -->
+            <div id="loadingOverlay" class="d-none position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(0,0,0,0.5); z-index: 1000;">
+                <div class="text-center text-white">
+                    <div class="spinner-border mb-3" role="status"></div>
+                    <p>Processing...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
