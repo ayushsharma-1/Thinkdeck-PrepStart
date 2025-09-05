@@ -112,7 +112,7 @@ export default function InterviewPage() {
         })
       })
 
-      // Also setup with backend
+      // Setup with backend and get first question
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/setup-interview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -124,9 +124,26 @@ export default function InterviewPage() {
         })
       })
 
+      const data = await response.json()
+      
       if (!response.ok) {
-        throw new Error('Failed to setup interview')
+        throw new Error(data.error || 'Failed to setup interview')
       }
+
+      // Store the first question in session
+      if (data.firstQuestion) {
+        await fetch('/api/session', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: newSessionId,
+            currentQuestion: data.firstQuestion,
+            questionNumber: 1
+          })
+        })
+      }
+
+      console.log('Interview setup successful:', data)
     } catch (error) {
       console.error('Failed to start interview session:', error)
       alert('Failed to start interview. Please try again.')

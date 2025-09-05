@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import pika
 import json
 import asyncio
@@ -15,6 +16,7 @@ import docx
 import google.generativeai as genai
 from groq import Groq
 from pydantic import BaseModel
+import threading
 
 load_dotenv()
 
@@ -26,7 +28,16 @@ google_api_key = os.getenv("GOOGLE_API_KEY")
 if google_api_key and google_api_key != "your_google_gemini_api_key_here":
     genai.configure(api_key=google_api_key)
 
-app = FastAPI(title="PrepStart AI Interview - FastAPI Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    consumer_thread = threading.Thread(target=consume_from_rabbitmq)
+    consumer_thread.daemon = True
+    consumer_thread.start()
+    yield
+    # Shutdown (if needed)
+
+app = FastAPI(title="PrepStart AI Interview - FastAPI Backend", lifespan=lifespan)
 
 # Pydantic models
 class InterviewSetup(BaseModel):
@@ -490,6 +501,35 @@ async def speech_to_text(audio: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/transcribe-audio")
+async def transcribe_audio(audio: UploadFile = File(...), sessionId: str = Form(...)):
+    """Convert uploaded audio to text - alias for speech-to-text with session support"""
+    try:
+        # Save uploaded file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            temp_file.write(await audio.read())
+            temp_file_path = temp_file.name
+
+        # Transcribe using AssemblyAI
+        transcriber = aai.Transcriber()
+        transcript = transcriber.transcribe(temp_file_path)
+        
+        # Clean up temp file
+        os.unlink(temp_file_path)
+        
+        if transcript.status == aai.TranscriptStatus.error:
+            raise HTTPException(status_code=400, detail=transcript.error)
+            
+        return {
+            "text": transcript.text,
+            "confidence": getattr(transcript, 'confidence', 0.0),
+            "status": "success",
+            "session_id": sessionId
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for real-time speech-to-text"""
@@ -563,14 +603,6 @@ def consume_from_rabbitmq():
     channel.basic_consume(queue='speech_to_text_requests', on_message_callback=callback)
     print('Waiting for messages from RabbitMQ...')
     channel.start_consuming()
-
-@app.on_event("startup")
-async def startup_event():
-    # Start RabbitMQ consumer in background
-    import threading
-    consumer_thread = threading.Thread(target=consume_from_rabbitmq)
-    consumer_thread.daemon = True
-    consumer_thread.start()
 
 if __name__ == "__main__":
     import uvicorn

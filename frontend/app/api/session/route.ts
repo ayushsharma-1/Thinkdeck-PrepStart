@@ -53,6 +53,37 @@ export async function GET(request: NextRequest) {
   }
 }
 
+export async function PUT(request: NextRequest) {
+  try {
+    const { sessionId, currentQuestion, questionNumber, ...updateData } = await request.json()
+
+    if (!sessionId) {
+      return NextResponse.json({ error: 'Session ID required' }, { status: 400 })
+    }
+
+    const session = new InterviewSession(sessionId)
+    
+    // Get existing session data
+    const existingData = await session.getSessionData()
+    
+    // Update session data
+    const updatedData = {
+      ...existingData,
+      ...updateData,
+      currentQuestion,
+      questionNumber,
+      updatedAt: Date.now()
+    }
+
+    await session.setSessionData(updatedData)
+    
+    return NextResponse.json({ success: true, sessionId })
+  } catch (error) {
+    console.error('Failed to update session:', error)
+    return NextResponse.json({ error: 'Failed to update session' }, { status: 500 })
+  }
+}
+
 export async function DELETE(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const sessionId = searchParams.get('sessionId')

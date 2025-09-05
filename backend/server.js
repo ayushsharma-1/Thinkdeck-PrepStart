@@ -127,22 +127,33 @@ app.get('/api/health', (req, res) => {
 // Setup interview with candidate details and resume
 app.post('/api/setup-interview', async (req, res) => {
     try {
-        const { name, email, phone, experience, role_name, job_description, resumeText } = req.body;
+        const { name, email, phone, experience, role_name, job_description, resumeText, sessionId } = req.body;
         
-        const sessionId = uuidv4();
-        const session = new InterviewSession({ 
-            sessionId,
-            candidate: { name, email, phone, experience },
-            jobDetails: { role_name, job_description },
-            resumeText,
-            startTime: new Date()
-        });
+        // Use provided sessionId or generate a new one
+        const finalSessionId = sessionId || uuidv4();
         
-        await session.save();
+        // Check if session already exists
+        let session = await InterviewSession.findOne({ sessionId: finalSessionId });
+        
+        if (!session) {
+            session = new InterviewSession({ 
+                sessionId: finalSessionId,
+                candidate: { name, email, phone, experience },
+                jobDetails: { role_name, job_description },
+                resumeText,
+                startTime: new Date()
+            });
+            
+            await session.save();
+            console.log('Created new session:', finalSessionId);
+        } else {
+            console.log('Using existing session:', finalSessionId);
+        }
         
         // Generate first question using AI
+        console.log('Generating first question for session:', finalSessionId);
         const firstQuestionResponse = await axios.post(`${process.env.FASTAPI_URL}/generate-question`, {
-            session_id: sessionId,
+            session_id: finalSessionId,
             previous_responses: [],
             resume_text: resumeText,
             job_description: job_description,
@@ -150,15 +161,27 @@ app.post('/api/setup-interview', async (req, res) => {
             question_number: 1
         });
         
+        console.log('FastAPI response:', firstQuestionResponse.data);
+        
         res.json({
-            sessionId,
+            sessionId: finalSessionId,
             firstQuestion: firstQuestionResponse.data.question,
             candidateName: name,
             roleName: role_name
         });
     } catch (error) {
         console.error('Setup interview error:', error);
-        res.status(500).json({ error: error.message });
+        console.error('Error details:', error.response?.data);
+        
+        // Return a fallback response
+        const fallbackSessionId = req.body.sessionId || uuidv4();
+        res.json({
+            sessionId: fallbackSessionId,
+            firstQuestion: "Thank you for joining us today! Please introduce yourself and tell me why you're interested in this role.",
+            candidateName: req.body.name,
+            roleName: req.body.role_name,
+            fallback: true
+        });
     }
 });
 
@@ -318,6 +341,83 @@ app.post('/api/speech-to-text', upload.single('audio'), async (req, res) => {
     } catch (error) {
         console.error('Speech-to-text error:', error);
         res.status(500).json({ error: 'Failed to process audio' });
+    }
+});
+
+// Generate question endpoint (for frontend to call)
+app.post('/api/generate-question', async (req, res) => {
+    try {
+        const { sessionId, questionNumber, previousResponses } = req.body;
+        console.log('Generate question request:', { sessionId, questionNumber, previousResponsesCount: previousResponses?.length });
+        
+        // Get session data
+        const session = await InterviewSession.findOne({ sessionId });
+        if (!session) {
+            console.error('Session not found:', sessionId);
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        console.log('Found session:', {
+            sessionId: session.sessionId,
+            hasResumeText: !!session.resumeText,
+            roleNamel: session.jobDetails?.role_name,
+            jobDescriptionLength: session.jobDetails?.job_description?.length
+        });
+
+        // Call FastAPI to generate question
+        const fastApiRequest = {
+            session_id: sessionId,
+            previous_responses: previousResponses || [],
+            resume_text: session.resumeText || '',
+            job_description: session.jobDetails?.job_description || '',
+            role_name: session.jobDetails?.role_name || 'Software Engineer',
+            question_number: questionNumber || 1
+        };
+        
+        console.log('Calling FastAPI with:', fastApiRequest);
+        
+        const response = await axios.post(`${process.env.FASTAPI_URL}/generate-question`, fastApiRequest, {
+            timeout: 30000, // 30 second timeout
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        console.log('FastAPI response:', response.data);
+
+        // Update session
+        session.currentQuestionIndex = questionNumber || 1;
+        await session.save();
+
+        res.json({
+            question: response.data.question,
+            questionNumber: questionNumber || 1,
+            sessionId
+        });
+    } catch (error) {
+        console.error('Generate question error:', error);
+        console.error('Error response:', error.response?.data);
+        console.error('Error message:', error.message);
+        
+        // Fallback question
+        const fallbackQuestions = [
+            "Can you tell me about yourself and your background?",
+            "What interests you about this role?",
+            "Describe your experience with the key skills mentioned in the job description.",
+            "Tell me about a challenging project you worked on recently.",
+            "How do you approach problem-solving in your work?",
+            "What are your career goals and how does this position fit into them?"
+        ];
+        
+        const questionIndex = (req.body.questionNumber || 1) - 1;
+        const fallbackQuestion = fallbackQuestions[questionIndex % fallbackQuestions.length];
+        
+        res.json({
+            question: fallbackQuestion,
+            questionNumber: req.body.questionNumber || 1,
+            sessionId: req.body.sessionId,
+            fallback: true
+        });
     }
 });
 
