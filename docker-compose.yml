@@ -1,77 +1,82 @@
 version: '3.8'
 
 services:
-  mongodb:
-    image: mongo:latest
-    container_name: prepstart-mongodb
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: prepstart-rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: admin
-
-  redis:
-    image: redis:7-alpine
-    container_name: prepstart-redis
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-
-  fastapi-backend:
+  # Node.js Backend Server
+  backend-server:
     build: 
-      context: ./fastapi-backend
+      context: ./backend-server
       dockerfile: Dockerfile
-    container_name: prepstart-fastapi
+    container_name: prepstart-backend-server
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - ./backend-server/.env
+    volumes:
+      - ./backend-server/logs:/app/logs
+      - ./backend-server/.env:/app/.env:ro
+    networks:
+      - prepstart-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # FastAPI Backend
+  backend-fastapi:
+    build:
+      context: ./backend-fastapi  
+      dockerfile: Dockerfile
+    container_name: prepstart-backend-fastapi
     ports:
       - "8000:8000"
-    depends_on:
-      - rabbitmq
     environment:
-      - RABBITMQ_URL=amqp://admin:admin@rabbitmq:5672
-      - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+      - PYTHON_ENV=production
+    env_file:
+      - ./backend-fastapi/.env
+    volumes:
+      - ./backend-fastapi/logs:/app/logs
+      - ./backend-fastapi/.env:/app/.env:ro
+    networks:
+      - prepstart-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  nodejs-backend:
+  # Next.js Frontend (Optional - can run separately with npm run dev)
+  frontend-client:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: prepstart-backend
-    ports:
-      - "3000:3000"
-    depends_on:
-      - mongodb
-      - rabbitmq
-      - fastapi-backend
-    environment:
-      - MONGODB_URI=mongodb://mongodb:27017/prepstart
-      - RABBITMQ_URL=amqp://admin:admin@rabbitmq:5672
-      - FASTAPI_URL=http://fastapi-backend:8000
-
-  frontend:
-    build:
-      context: ./frontend
+      context: ./frontend-client
       dockerfile: Dockerfile
     container_name: prepstart-frontend
     ports:
       - "3000:3000"
-    depends_on:
-      - nodejs-backend
     environment:
-      - NEXT_PUBLIC_API_BASE_URL=http://nodejs-backend:3000
-      - NEXT_PUBLIC_FASTAPI_URL=http://fastapi-backend:8000
-      - REDIS_URL=${REDIS_URL}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://localhost:5000
+      - NEXT_PUBLIC_FASTAPI_URL=http://localhost:8000
+    volumes:
+      - ./frontend-client/.env.local:/app/.env.local:ro
+    networks:
+      - prepstart-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-volumes:
-  mongodb_data:
-  redis_data:
+networks:
+  prepstart-network:
+    driver: bridge
+
+# Note: No volumes needed since we're using cloud services:
+# - MongoDB Atlas (cloud)
+# - Redis Cloud  
+# - RabbitMQ Cloud
