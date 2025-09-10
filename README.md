@@ -39,28 +39,7 @@ This will:
 - Set up log directories
 - Pull Docker images
 
-### 2. Configure Environment Variables
-
-**Node.js Backend** (`backend-server/.env`):
-```env
-PORT=5000
-NODE_ENV=production
-MONGODB_URI=mongodb+srv://Thinkdeck:Thinkdeck2025@upskillthinkdeck.dca43i1.mongodb.net/prepstart?retryWrites=true&w=majority
-REDIS_URL=redis://default:lNUk0MfUQ89rWnfdWIY5iQPsVoenRFnz@redis-13322.c264.ap-south-1-1.ec2.redns.redis-cloud.com:13322
-RABBITMQ_URL=amqps://uyavtoms:P65aiPNgloYM1u7iWOem_zwuHNM85e-M@puffin.rmq2.cloudamqp.com/uyavtoms
-FRONTEND_URL=http://localhost:3000
-```
-
-**FastAPI Backend** (`backend-fastapi/.env`):
-```env
-PORT=8000
-ASSEMBLYAI_API_KEY=243b865ea94048c281f393da7f471047
-GROQ_API_KEY=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
-GOOGLE_API_KEY=AIzaSyAkA_IdOZZCiT9NQ85ccmzVKMU-jB2-QTc
-RABBITMQ_URL=amqps://uyavtoms:P65aiPNgloYM1u7iWOem_zwuHNM85e-M@puffin.rmq2.cloudamqp.com/uyavtoms
-```
-
-### 3. Start All Services
+### 2. Start All Services
 ```batch
 start-all.bat
 ```

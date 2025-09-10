@@ -1,11 +1,75 @@
 const express = require('express');
 const axios = require('axios');
+const multer = require('multer');
 const { Session } = require('../models/Session');
 const { getRedisClient } = require('../config/redis');
 const logger = require('../utils/logger');
 const { AppError } = require('../utils/errorHandler');
 
 const router = express.Router();
+
+// Configure multer for file uploads
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
+
+// Upload and process resume
+router.post('/upload-resume', upload.single('resume'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No resume file provided'
+      });
+    }
+    
+    // Create FormData to send to FastAPI backend for text extraction
+    const FormData = require('form-data');
+    const formData = new FormData();
+    formData.append('file', req.file.buffer, req.file.originalname);
+    
+    // Send to FastAPI backend for text extraction
+    const response = await axios.post('http://localhost:8000/upload-resume', formData, {
+      headers: {
+        ...formData.getHeaders(),
+      },
+      timeout: 30000 // 30 second timeout for file processing
+    });
+    
+    if (response.data && response.data.text) {
+      res.json({
+        success: true,
+        resumeText: response.data.text,
+        filename: response.data.filename || req.file.originalname,
+        message: 'Resume processed successfully'
+      });
+    } else {
+      throw new Error('Failed to extract text from resume');
+    }
+    
+  } catch (error) {
+    logger.error('Resume upload error:', error);
+    
+    if (error.code === 'ECONNREFUSED') {
+      return res.status(503).json({
+        success: false,
+        message: 'Resume processing service is unavailable. Please try again later.'
+      });
+    }
+    
+    if (error.response?.status === 400) {
+      return res.status(400).json({
+        success: false,
+        message: error.response.data?.detail || 'Invalid file format'
+      });
+    }
+    
+    next(new AppError('Failed to process resume', 500));
+  }
+});
 
 // Get all sessions (admin endpoint)
 router.get('/sessions', async (req, res, next) => {

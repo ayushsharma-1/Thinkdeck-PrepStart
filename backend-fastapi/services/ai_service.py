@@ -140,14 +140,14 @@ STRICT REQUIREMENTS:
 - Generate ONLY ONE concise introduction question
 - Keep it professional but friendly for a video call
 - Mention the specific role: {role_name}
-- Ask candidate to introduce themselves
+- Ask candidate to introduce themselves and their interest in the role
 
-FORBIDDEN WORDS: office, building, location, in-person, physical, venue
+FORBIDDEN WORDS: office, building, location, in-person, physical, venue, workplace, premises, facility
 
 Generate exactly one question following this pattern:
-"Hello! I'm excited to interview you today for the [role] position. Let's start with a simple question: [introduction request]"
+"Hello! I'm excited to interview you today for the [role] position. Can you tell me about yourself and why you're interested in this role?"
 
-Example: "Hello! I'm excited to interview you today for the Software Engineer Intern position. Let's start with a simple question: Can you tell me about yourself and why you're interested in this role?"
+IMPORTANT: Do not use any forbidden words. This is a REMOTE video interview.
 
 Generate ONLY the question, no additional text.
 """

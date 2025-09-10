@@ -55,38 +55,49 @@ const SetupPage = ({ sessionData, onSessionDataUpdate, onNext, onBack }) => {
     setIsLoading(true);
     
     try {
-      // Create FormData to send file
+      // Create FormData to send file to backend for processing
       const formData = new FormData();
       formData.append('resume', file);
       
-      // In a real application, you would send this to your backend
-      // For now, we'll simulate the upload and store file info
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      onSessionDataUpdate({ 
-        resume: {
-          name: file.name,
-          size: file.size,
-          type: file.type,
-          lastModified: file.lastModified,
-          // In a real app, this would be the file URL or ID from the server
-          url: URL.createObjectURL(file)
-        }
+      // Send file to backend server for text extraction
+      const response = await fetch('http://localhost:5000/api/upload-resume', {
+        method: 'POST',
+        body: formData,
       });
       
-      toast.success('Resume uploaded successfully');
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to process resume');
+      }
+      
+      if (result.success && result.resumeText) {
+        // Store both file info and extracted text
+        onSessionDataUpdate({ 
+          resume: {
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            lastModified: file.lastModified,
+            url: URL.createObjectURL(file)
+          },
+          resumeText: result.resumeText // Store extracted text for AI processing
+        });
+        
+        toast.success('Resume uploaded and processed successfully');
+      } else {
+        throw new Error('Failed to extract text from resume');
+      }
     } catch (error) {
       console.error('Resume upload failed:', error);
-      toast.error('Resume upload failed. Please try again.');
+      toast.error(`Resume upload failed: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
   };
 
   const removeResume = () => {
-    onSessionDataUpdate({ resume: null });
+    onSessionDataUpdate({ resume: null, resumeText: null });
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
