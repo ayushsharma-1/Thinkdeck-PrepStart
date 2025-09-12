@@ -18,6 +18,9 @@ import {
   Send,
   Clock,
   AlertCircle,
+  AlertTriangle,
+  Award,
+  Star,
   User,
   Bot,
   Volume2,
@@ -45,6 +48,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   const [timeRemaining, setTimeRemaining] = useState(1800); // 30 minutes
   const [sessionId, setSessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   const [isInterviewActive, setIsInterviewActive] = useState(false);
+  const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [initializationStep, setInitializationStep] = useState('');
   
@@ -61,6 +65,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   const [hasWarned, setHasWarned] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isQuestionLoaded, setIsQuestionLoaded] = useState(false);
   
   // Refs for media handling
   const userVideoRef = useRef(null);
@@ -73,6 +78,20 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   const socketRef = useRef(null);
   const silenceTimeoutRef = useRef(null);
   const speechSynthRef = useRef(null);
+  const isQuestionLoadingRef = useRef(false);
+  
+  // Security monitoring refs
+  const tabSwitchCountRef = useRef(0);
+  const windowBlurCountRef = useRef(0);
+  const fullscreenExitCountRef = useRef(0);
+  const securityViolationsRef = useRef([]);
+  const lastActivityRef = useRef(Date.now());
+  
+  // Security state
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [securityWarnings, setSecurityWarnings] = useState([]);
+  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
+  const [securityViolationCount, setSecurityViolationCount] = useState(0);
   
   // Constants
   const SILENCE_THRESHOLD = 5000; // 5 seconds
@@ -83,17 +102,28 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
 
   // Initialize socket connection and interview session
   useEffect(() => {
+    console.log('🔄 useEffect triggered - isInitialized:', isInitialized);
+    
     if (!isInitialized) {
+      console.log('✅ Starting initialization process...');
       setIsInitialized(true);
+      console.log('📱 Calling initializeSocket()');
       initializeSocket();
+      console.log('🎯 Calling initializeInterview()');
       initializeInterview();
+      console.log('🛡️ Calling setupViolationDetection()');
       setupViolationDetection();
+    } else {
+      console.log('❌ Already initialized, skipping...');
     }
     
     return () => {
-      cleanupInterview();
+      console.log('🧹 useEffect cleanup triggered');
+      cleanupInterview().catch(error => 
+        console.error('Error during cleanup:', error)
+      );
     };
-  }, [isInitialized]);
+  }, []); // Empty dependency array - run only once on mount
 
   // Timer management
   useEffect(() => {
@@ -146,6 +176,31 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   }, [isRecording, audioLevel]);
   */
 
+  // Security system initialization
+  useEffect(() => {
+    let securityCleanup;
+    
+    if (isInterviewActive) {
+      console.log('🔒 Initializing interview security system...');
+      securityCleanup = initializeSecurity();
+      
+      // Initialize activity tracking
+      lastActivityRef.current = Date.now();
+      
+      // Clear any existing violations from previous sessions
+      setSecurityViolationCount(0);
+      setSecurityWarnings([]);
+      securityViolationsRef.current = [];
+    }
+    
+    return () => {
+      if (securityCleanup) {
+        console.log('🧹 Cleaning up security system...');
+        securityCleanup();
+      }
+    };
+  }, [isInterviewActive]);
+
   const initializeSocket = () => {
     try {
       socketRef.current = io(API_BASE_URL, {
@@ -164,6 +219,9 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       });
       
       socketRef.current.on('newQuestion', (data) => {
+        console.log(`[SOCKET] Received newQuestion event:`, data);
+        console.log(`[SOCKET] Current sessionId: ${sessionId}, current questionNumber: ${questionNumber}`);
+        console.log(`[SOCKET] Current chat messages count: ${chatMessages.length}`);
         handleNewQuestion(data.question, data.questionNumber);
       });
       
@@ -182,37 +240,44 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   };
 
   const initializeInterview = async () => {
-    if (isInitialized) {
-      console.log('Interview already initialized, skipping...');
+    console.log('🚀 initializeInterview called - isInitialized:', isInitialized, 'isQuestionLoaded:', isQuestionLoaded);
+    
+    if (isInitialized && (isQuestionLoaded || isQuestionLoadingRef.current)) {
+      console.log('⚠️ Interview already initialized and question loaded/loading, skipping...');
       return;
     }
     
     try {
+      console.log('🎬 Starting interview initialization...');
       setInitializationStep('Setting up camera and microphone...');
       await new Promise(resolve => setTimeout(resolve, 1000)); // Give user time to read
       
       // Initialize video stream
+      console.log('📹 Initializing user video...');
       await initializeUserVideo();
       
       setInitializationStep('Configuring audio settings...');
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       // Initialize audio context for always-on microphone
+      console.log('🎤 Initializing audio context...');
       await initializeAudioContext();
       
       setInitializationStep('Connecting to interview service...');
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       // Load first question from backend
+      console.log('❓ Loading first question...');
       await loadFirstQuestion();
       
       setInitializationStep('Ready to start!');
       await new Promise(resolve => setTimeout(resolve, 500));
       
+      console.log('✅ Interview initialization completed');
       setIsInitializing(false);
       setIsInterviewActive(true);
     } catch (error) {
-      console.error('Interview initialization failed:', error);
+      console.error('💥 Interview initialization failed:', error);
       setIsInitializing(false);
       toast.error('Failed to initialize interview. Please refresh and try again.');
     }
@@ -301,7 +366,29 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   };
 
   const loadFirstQuestion = async () => {
+    const callId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    console.log(`� [${callId}] loadFirstQuestion CALLED - isQuestionLoaded:`, isQuestionLoaded, 'isQuestionLoadingRef:', isQuestionLoadingRef.current);
+    
+    // Use synchronous ref check to prevent race conditions
+    if (isQuestionLoaded || isQuestionLoadingRef.current) {
+      console.log(`🛑 [${callId}] Question already loaded or loading, SKIPPING...`);
+      return;
+    }
+    
     try {
+      console.log(`� [${callId}] Setting synchronous loading flag to TRUE`);
+      isQuestionLoadingRef.current = true;
+      
+      console.log(`🔄 [${callId}] Setting isQuestionLoaded state to TRUE`);
+      setIsQuestionLoaded(true);
+      
+      console.log(`📡 [${callId}] Making API request to get-session...`);
+      console.log(`📡 [${callId}] sessionData being sent:`, {
+        ...sessionData,
+        resumeText: sessionData.resumeText ? `${sessionData.resumeText.substring(0, 200)}...` : 'EMPTY',
+        jobDescription: sessionData.jobDescription ? `${sessionData.jobDescription.substring(0, 200)}...` : 'EMPTY'
+      });
+      
       const response = await fetchWithRetry(`${API_BASE_URL}/api/get-session`, {
         method: 'POST',
         headers: {
@@ -313,25 +400,31 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
         }),
       });
       
+      console.log(`📊 [${callId}] API response received, status:`, response.status);
       const data = await response.json();
+      console.log(`📋 [${callId}] API response data:`, data);
       
       if (data.success) {
+        console.log(`✅ [${callId}] Session created successfully:`, data.sessionId);
         setSessionId(data.sessionId);
         setCurrentQuestion(data.firstQuestion);
         setQuestionNumber(1);
         
+        console.log(`💬 [${callId}] Adding AI message to chat:`, data.firstQuestion);
         // Add question to chat and speak it
         addAIMessage(data.firstQuestion, false);
+        console.log(`🔊 [${callId}] Speaking question...`);
         speakQuestion(data.firstQuestion);
       } else {
         throw new Error(data.message || 'Failed to load first question');
       }
     } catch (error) {
-      console.error('Error loading first question:', error);
+      console.error(`💥 [${callId}] Error loading first question:`, error);
       toast.error('Failed to load interview questions. Please try again.');
       
       // Fallback question
       const fallbackQuestion = "Hello! I'm excited to interview you today. Let's start with a simple question: Can you tell me about yourself and why you're interested in this position?";
+      console.log(`🔄 [${callId}] Using fallback question:`, fallbackQuestion);
       setCurrentQuestion(fallbackQuestion);
       setQuestionNumber(1);
       addAIMessage(fallbackQuestion, false);
@@ -406,8 +499,230 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
 
   const handleInterviewEnd = () => {
     setIsInterviewActive(false);
-    cleanupInterview();
-    generateFinalResults();
+    setIsLoadingResults(true);
+    
+    // Show loading for 3-5 seconds before showing results
+    setTimeout(() => {
+      cleanupInterview().catch(error => 
+        console.error('Error during cleanup:', error)
+      );
+      generateFinalResults();
+      setIsLoadingResults(false);
+    }, 3000);
+  };
+
+  // Security monitoring functions
+  const logSecurityViolation = (type, details) => {
+    const violation = {
+      type,
+      details,
+      timestamp: new Date().toISOString(),
+      questionNumber: questionNumber
+    };
+    
+    securityViolationsRef.current.push(violation);
+    console.warn(`🚨 Security Violation [${type}]:`, details);
+    
+    // Update violation count
+    const newCount = securityViolationCount + 1;
+    setSecurityViolationCount(newCount);
+    
+    // Show warning - more subtle approach
+    const warningMessage = getSecurityWarningMessage(type, newCount);
+    
+    // For minor violations, just show in chat
+    if (['tab_switching', 'window_focus_loss', 'keyboard_shortcuts', 'right_click_disabled'].includes(type)) {
+      // Add to chat instead of intrusive popup
+      const warningChatMessage = {
+        id: Date.now(),
+        text: warningMessage,
+        sender: 'system',
+        timestamp: new Date(),
+        type: 'warning'
+      };
+      setChatMessages(prev => [...prev, warningChatMessage]);
+    } else {
+      // For serious violations, show toast
+      toast.error(warningMessage);
+      setSecurityWarnings(prev => [...prev, warningMessage]);
+    }
+    
+    // Store violations in localStorage for results page
+    localStorage.setItem('interviewViolations', JSON.stringify(securityViolationsRef.current));
+    
+    // Critical violations that end interview
+    const criticalViolations = ['excessive_tab_switching', 'excessive_window_focus_loss', 'fullscreen_exit_repeated'];
+    
+    if (criticalViolations.includes(type)) {
+      handleSecurityBreach(type, newCount);
+    }
+  };
+
+  const getSecurityWarningMessage = (type, count) => {
+    const messages = {
+      'tab_switching': `⚠️ Tab switching detected - Interview will be terminated`,
+      'window_focus_loss': `⚠️ Keep the interview window active (${count}/7)`,
+      'fullscreen_exit': `⚠️ Please return to fullscreen mode (${count}/3)`,
+      'excessive_tab_switching': `🚨 Interview Terminated: Tab switching is not allowed during interviews`,
+      'excessive_window_focus_loss': `🚨 Interview terminated: Too many focus losses (${count})`,
+      'fullscreen_exit_repeated': `🚨 Interview terminated: Repeated fullscreen exits (${count})`,
+      'prolonged_inactivity': '⏰ Are you still there? Please continue with the interview.',
+      'copy_paste_attempt': '📋 Copy/paste operations are not allowed during interviews.',
+      'right_click_disabled': '🖱️ Right-click is disabled to maintain interview integrity.',
+      'keyboard_shortcuts': '⌨️ Some keyboard shortcuts are disabled during the interview.'
+    };
+    return messages[type] || `Security notice: ${type}`;
+  };
+
+  const handleSecurityBreach = (type, count) => {
+    console.error('🚨 CRITICAL SECURITY BREACH:', type, count);
+    setIsSecurityModalOpen(true);
+    
+    // End interview after 5 seconds
+    setTimeout(() => {
+      handleInterviewEnd();
+      onEndInterview?.();
+    }, 5000);
+  };
+
+  const initializeSecurity = () => {
+    // Request fullscreen
+    const requestFullscreen = () => {
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(console.error);
+      }
+    };
+
+    // Tab switching detection - STRICT: 1+ = exit
+    const handleVisibilityChange = () => {
+      if (document.hidden && isInterviewActive) {
+        tabSwitchCountRef.current += 1;
+        const count = tabSwitchCountRef.current;
+        
+        console.warn(`🚨 Tab switch detected - TERMINATING INTERVIEW - Count: ${count}`);
+        
+        // Immediate termination on first tab switch
+        logSecurityViolation('excessive_tab_switching', { count });
+      }
+    };
+
+    // Window focus loss detection
+    const handleWindowBlur = () => {
+      windowBlurCountRef.current += 1;
+      const count = windowBlurCountRef.current;
+      
+      if (count >= 5) {
+        logSecurityViolation('excessive_window_focus_loss', { count });
+      } else {
+        logSecurityViolation('window_focus_loss', { count });
+      }
+    };
+
+    // Fullscreen exit detection
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!(document.fullscreenElement || 
+                                      document.webkitFullscreenElement || 
+                                      document.mozFullScreenElement);
+      
+      setIsFullscreen(isCurrentlyFullscreen);
+      
+      // Only track violations if interview has been active for more than 10 seconds
+      const interviewStartTime = Date.now() - (timeRemaining * 60 * 1000 - (15 * 60 * 1000));
+      const isInterviewSettled = Date.now() - interviewStartTime > 10000; // 10 seconds grace period
+      
+      if (!isCurrentlyFullscreen && isInterviewActive && isInterviewSettled) {
+        fullscreenExitCountRef.current += 1;
+        const count = fullscreenExitCountRef.current;
+        
+        console.warn(`🚨 Fullscreen exit detected - Count: ${count}`);
+        
+        if (count >= 3) { // Changed from 2 to 3 to be more lenient
+          logSecurityViolation('fullscreen_exit_repeated', { count });
+        } else {
+          logSecurityViolation('fullscreen_exit', { count });
+          // Auto re-request fullscreen after 5 seconds (increased from 3)
+          setTimeout(requestFullscreen, 5000);
+        }
+      } else if (!isCurrentlyFullscreen && isInterviewActive && !isInterviewSettled) {
+        // During grace period, just request fullscreen without logging violation
+        console.log('🟡 Fullscreen exit during grace period - requesting return');
+        setTimeout(requestFullscreen, 2000);
+      }
+    };
+
+    // Keyboard shortcuts prevention
+    const handleKeyDown = (e) => {
+      // Prevent common cheating shortcuts
+      const forbiddenKeys = [
+        'F12', // DevTools
+        'F5',  // Refresh
+        'PrintScreen', // Screenshot
+      ];
+      
+      if (forbiddenKeys.includes(e.key) ||
+          (e.ctrlKey && ['c', 'v', 'x', 'a', 'f', 's', 'r', 't', 'w', 'shift+i', 'shift+j', 'u'].includes(e.key.toLowerCase())) ||
+          (e.altKey && e.key === 'Tab') || // Alt+Tab
+          e.key === 'F11') { // Fullscreen toggle
+        
+        e.preventDefault();
+        e.stopPropagation();
+        logSecurityViolation('keyboard_shortcuts', { key: e.key, ctrlKey: e.ctrlKey, altKey: e.altKey });
+      }
+    };
+
+    // Right-click prevention
+    const handleContextMenu = (e) => {
+      e.preventDefault();
+      logSecurityViolation('right_click_disabled', { target: e.target.tagName });
+    };
+
+    // Activity monitoring
+    const handleUserActivity = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    // Inactivity detection
+    const checkInactivity = () => {
+      const now = Date.now();
+      const timeSinceLastActivity = now - lastActivityRef.current;
+      
+      if (timeSinceLastActivity > 60000) { // 1 minute of inactivity
+        logSecurityViolation('prolonged_inactivity', { duration: timeSinceLastActivity });
+      }
+    };
+
+    // Set up event listeners
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('contextmenu', handleContextMenu);
+    
+    // Activity listeners
+    ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(event => {
+      document.addEventListener(event, handleUserActivity, true);
+    });
+
+    // Start fullscreen
+    requestFullscreen();
+
+    // Start inactivity monitoring
+    const inactivityTimer = setInterval(checkInactivity, 30000); // Check every 30 seconds
+
+    // Return cleanup function
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('contextmenu', handleContextMenu);
+      
+      ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(event => {
+        document.removeEventListener(event, handleUserActivity, true);
+      });
+      
+      clearInterval(inactivityTimer);
+    };
   };
 
   const speakQuestion = (question) => {
@@ -429,7 +744,12 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       };
       
       utterance.onerror = (error) => {
-        console.error('Speech synthesis error:', error);
+        console.error('Speech synthesis error:', {
+          error: error || 'Unknown error',
+          message: error?.message || 'Speech synthesis failed',
+          type: error?.error || 'unknown',
+          elapsed: error?.elapsedTime || 0
+        });
         setIsAISpeaking(false);
         toast.error('Audio playback failed. You can still type your response.');
       };
@@ -595,6 +915,27 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       if (result.success && result.transcript) {
         const transcript = result.transcript.trim();
         
+        // Check for "end interview" voice command
+        const endPhrases = [
+          'end interview', 'end the interview', 'finish interview', 
+          'stop interview', 'terminate interview', 'conclude interview',
+          'end this interview', 'finish this interview'
+        ];
+        
+        const lowercaseTranscript = transcript.toLowerCase();
+        const shouldEndInterview = endPhrases.some(phrase => 
+          lowercaseTranscript.includes(phrase)
+        );
+        
+        if (shouldEndInterview) {
+          toast.info('🎤 Voice command detected: Ending interview...');
+          addUserMessage("I would like to end the interview now.", true);
+          setTimeout(() => {
+            handleInterviewEnd();
+          }, 2000);
+          return;
+        }
+        
         if (transcript.length < 10) {
           toast.error('Response too short. Please provide a more detailed answer.');
           return;
@@ -627,6 +968,11 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   };
 
   const submitResponse = async (response) => {
+    const submitStartTime = Date.now();
+    console.log(`[SUBMIT] Starting submitResponse at ${submitStartTime}`);
+    console.log(`[SUBMIT] Current state - sessionId: ${sessionId}, questionNumber: ${questionNumber}, response length: ${response?.length || 0}`);
+    console.log(`[SUBMIT] Current chat messages count: ${chatMessages.length}`);
+    
     try {
       // Submit response and get next question
       const submitData = {
@@ -635,6 +981,8 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
         questionNumber,
         timestamp: new Date().toISOString(),
       };
+      
+      console.log(`[SUBMIT] Calling API with data:`, submitData);
       
       const result = await fetchWithRetry(`${API_BASE_URL}/api/generate-next-question`, {
         method: 'POST',
@@ -645,18 +993,26 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       });
       
       const data = await result.json();
+      console.log(`[SUBMIT] API response received:`, data);
       
       if (data.success) {
         if (data.interview_completed) {
+          console.log(`[SUBMIT] Interview completed, ending interview`);
           toast.success('Interview completed! Thank you for your time.');
           handleInterviewEnd();
         } else {
+          console.log(`[SUBMIT] Processing next question - received question ${data.question_number}: "${data.question}"`);
+          console.log(`[SUBMIT] Previous question number: ${questionNumber}, new question number: ${data.question_number}`);
+          
           // Set next question
           setCurrentQuestion(data.question);
           setQuestionNumber(data.question_number);
           
+          console.log(`[SUBMIT] About to call addAIMessage for question ${data.question_number}`);
           // Add new question to chat and speak it
           addAIMessage(data.question, false);
+          
+          console.log(`[SUBMIT] About to speak question ${data.question_number}`);
           speakQuestion(data.question);
           
           toast.success('Response submitted successfully');
@@ -664,21 +1020,34 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
         
         // Notify socket for real-time updates
         if (socketRef.current) {
+          console.log(`[SUBMIT] Emitting responseSubmitted via socket`);
           socketRef.current.emit('responseSubmitted', submitData);
         }
       } else {
+        console.error(`[SUBMIT] API returned failure:`, data);
         throw new Error(data.message || 'Failed to submit response');
       }
     } catch (error) {
-      console.error('Error submitting response:', error);
+      console.error('[SUBMIT] Error submitting response:', error);
       toast.error('Failed to submit response. Please try again.');
     }
+    
+    const submitEndTime = Date.now();
+    console.log(`[SUBMIT] Completed submitResponse in ${submitEndTime - submitStartTime}ms`);
   };
 
   const handleNewQuestion = (question, questionNum) => {
+    console.log(`[HANDLE_NEW_Q] handleNewQuestion called with question ${questionNum}: "${question}"`);
+    console.log(`[HANDLE_NEW_Q] Current sessionId: ${sessionId}, current questionNumber: ${questionNumber}`);
+    console.log(`[HANDLE_NEW_Q] Current chat messages count: ${chatMessages.length}`);
+    
     setCurrentQuestion(question);
     setQuestionNumber(questionNum);
+    
+    console.log(`[HANDLE_NEW_Q] About to call addAIMessage from handleNewQuestion`);
     addAIMessage(question, false);
+    
+    console.log(`[HANDLE_NEW_Q] About to call speakQuestion from handleNewQuestion`);
     speakQuestion(question);
   };
 
@@ -694,6 +1063,12 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   };
 
   const addAIMessage = (message, isTyping = false) => {
+    const messageId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    console.log(`FRONTEND_ADD_AI_MESSAGE [${messageId}] CALLED with message:`, message.substring(0, 50) + '...');
+    console.log(`FRONTEND_ADD_AI_MESSAGE [${messageId}] Current chat messages count:`, chatMessages.length);
+    console.log(`FRONTEND_ADD_AI_MESSAGE [${messageId}] Current question number:`, questionNumber);
+    console.log(`FRONTEND_ADD_AI_MESSAGE [${messageId}] Session ID:`, sessionId);
+    
     const newMessage = {
       id: Date.now() + Math.random(),
       sender: 'ai',
@@ -701,7 +1076,14 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       timestamp: new Date(),
       type: 'question'
     };
-    setChatMessages(prev => [...prev, newMessage]);
+    
+    console.log(`FRONTEND_ADD_AI_MESSAGE [${messageId}] New message created with ID:`, newMessage.id);
+    setChatMessages(prev => {
+      console.log(`FRONTEND_ADD_AI_MESSAGE [${messageId}] Previous chat length:`, prev.length, 'New length:', prev.length + 1);
+      return [...prev, newMessage];
+    });
+    
+    console.log(`FRONTEND_ADD_AI_MESSAGE [${messageId}] Message added to chat successfully`);
   };
 
   const generateFinalResults = async () => {
@@ -821,7 +1203,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
     throw lastError;
   };
 
-  const cleanupInterview = () => {
+  const cleanupInterview = async () => {
     // Stop recording
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
@@ -833,8 +1215,14 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
     }
     
     // Close audio context
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try {
+        await audioContextRef.current.close();
+        console.log('AudioContext closed successfully');
+      } catch (error) {
+        console.warn('AudioContext already closed or error closing:', error);
+      }
+      audioContextRef.current = null;
     }
     
     // Stop all media streams
@@ -997,7 +1385,14 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   };
 
   const formatMessageTime = (timestamp) => {
-    return timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+      // Convert timestamp to Date object if it's not already
+      const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (error) {
+      console.error('Error formatting timestamp:', error);
+      return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
   };
 
   const canProceed = connectionStatus === 'connected' && isInterviewActive;
@@ -1018,6 +1413,38 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
             <div className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full animate-pulse w-3/4"></div>
           </div>
           <p className="text-sm text-gray-500">Please wait while we prepare everything for your interview...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show loading screen when generating results
+  if (isLoadingResults) {
+    return (
+      <div className="h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
+        <div className="text-center space-y-8 p-8">
+          <div className="relative">
+            <div className="w-24 h-24 bg-gradient-to-r from-green-500 to-blue-600 rounded-full flex items-center justify-center mx-auto">
+              <Award className="w-12 h-12 text-white animate-pulse" />
+            </div>
+            <div className="absolute -top-2 -right-2 w-8 h-8 bg-yellow-400 rounded-full flex items-center justify-center animate-bounce">
+              <Star className="w-4 h-4 text-yellow-800" />
+            </div>
+          </div>
+          <div className="space-y-3">
+            <h2 className="text-3xl font-bold text-white">Analyzing Your Performance</h2>
+            <p className="text-gray-300 text-lg">We're evaluating your responses and generating detailed feedback...</p>
+          </div>
+          <div className="w-80 mx-auto">
+            <div className="bg-gray-700 rounded-full h-3 overflow-hidden">
+              <div className="bg-gradient-to-r from-green-500 to-blue-600 h-3 rounded-full animate-pulse w-full"></div>
+            </div>
+          </div>
+          <div className="space-y-2 text-gray-400 text-sm">
+            <p>✅ Analyzing communication skills</p>
+            <p>✅ Evaluating technical responses</p>
+            <p>⏳ Generating personalized feedback...</p>
+          </div>
         </div>
       </div>
     );
@@ -1268,14 +1695,22 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
             {chatMessages.map((message) => (
               <div
                 key={message.id}
-                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}
+                className={`flex ${
+                  message.sender === 'user' ? 'justify-end' : 
+                  message.sender === 'system' ? 'justify-center' : 'justify-start'
+                } animate-fade-in`}
               >
                 <div className={`max-w-[85%] relative ${
                   message.sender === 'user'
                     ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg'
+                    : message.sender === 'system'
+                    ? message.type === 'warning'
+                      ? 'bg-gradient-to-r from-orange-100 to-orange-200 text-orange-800 shadow-md border-l-4 border-orange-400'
+                      : 'bg-gradient-to-r from-blue-100 to-blue-200 text-blue-800 shadow-md'
                     : 'bg-gradient-to-r from-gray-100 to-gray-200 text-gray-800 shadow-md'
                   } rounded-xl p-4 backdrop-blur-sm border ${
-                  message.sender === 'user' ? 'border-blue-400/30' : 'border-gray-300/50'
+                  message.sender === 'user' ? 'border-blue-400/30' : 
+                  message.sender === 'system' ? 'border-orange-300/50' : 'border-gray-300/50'
                 }`}>
                   <div className="flex items-start space-x-3">
                     {message.sender === 'ai' && (
@@ -1288,17 +1723,28 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
                         <User className="w-3 h-3 text-white" />
                       </div>
                     )}
+                    {message.sender === 'system' && (
+                      <div className="w-6 h-6 bg-orange-500/20 rounded-full flex items-center justify-center flex-shrink-0 mt-1">
+                        <AlertTriangle className="w-3 h-3 text-orange-600" />
+                      </div>
+                    )}
                     <div className="flex-1">
-                      <p className="text-sm leading-relaxed">{message.message}</p>
+                      <p className="text-sm leading-relaxed">{message.text || message.message}</p>
                       <div className="flex items-center justify-between mt-2">
                         <p className={`text-xs ${
-                          message.sender === 'user' ? 'text-blue-100' : 'text-gray-500'
+                          message.sender === 'user' ? 'text-blue-100' : 
+                          message.sender === 'system' ? 'text-orange-600' : 'text-gray-500'
                         }`}>
                           {formatMessageTime(message.timestamp)}
                         </p>
                         {message.type === 'response' && (
                           <span className="ml-2 px-2 py-1 bg-blue-200/80 text-blue-800 rounded-full text-xs font-medium backdrop-blur-sm">
                             ✓ Response
+                          </span>
+                        )}
+                        {message.type === 'warning' && (
+                          <span className="ml-2 px-2 py-1 bg-orange-200/80 text-orange-800 rounded-full text-xs font-medium backdrop-blur-sm">
+                            ⚠️ Security
                           </span>
                         )}
                       </div>
@@ -1384,6 +1830,18 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
           </div>
         </div>
       </div>
+
+      {/* Security Status - Subtle indicator only */}
+      {isInterviewActive && (
+        <div className="fixed bottom-4 left-4 z-40">
+          <div className="bg-gray-800/90 backdrop-blur-sm text-white p-2 rounded-lg shadow-lg border border-gray-700/50">
+            <div className="flex items-center space-x-2 text-xs">
+              <div className={`w-2 h-2 rounded-full ${isFullscreen ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
+              <span>Security: {securityViolationCount} notices</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

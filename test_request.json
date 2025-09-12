@@ -1,0 +1,9 @@
+{
+  "session_id": "test-debug-123",
+  "resume_text": "John Doe - Software Engineer with 5+ years experience in React, Node.js, and MongoDB. Previously worked at Tech Corp building scalable web applications. Skills include: JavaScript, TypeScript, Python, Docker, AWS. Led development of microservices architecture serving 1M+ users.",
+  "job_description": "We are hiring a Senior Full-Stack Developer with expertise in React and Node.js for our growing startup. The ideal candidate should have 5+ years of experience, knowledge of MongoDB, and experience with cloud platforms like AWS. You will be responsible for building our next-generation platform.",
+  "role_name": "Senior Full-Stack Developer",
+  "question_number": 1,
+  "previous_responses": [],
+  "covered_topics": []
+}

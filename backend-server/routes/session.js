@@ -5,6 +5,7 @@ const { Session } = require('../models/Session');
 const { getRedisClient } = require('../config/redis');
 const logger = require('../utils/logger');
 const { AppError } = require('../utils/errorHandler');
+const { processResumeFile } = require('../utils/resumeProcessor');
 
 const router = express.Router();
 
@@ -26,48 +27,42 @@ router.post('/upload-resume', upload.single('resume'), async (req, res, next) =>
       });
     }
     
-    // Create FormData to send to FastAPI backend for text extraction
-    const FormData = require('form-data');
-    const formData = new FormData();
-    formData.append('file', req.file.buffer, req.file.originalname);
+    // Process resume locally using our resume processor
+    const result = await processResumeFile(req.file);
     
-    // Send to FastAPI backend for text extraction
-    const response = await axios.post('http://localhost:8000/upload-resume', formData, {
-      headers: {
-        ...formData.getHeaders(),
-      },
-      timeout: 30000 // 30 second timeout for file processing
-    });
-    
-    if (response.data && response.data.text) {
+    if (result.success) {
+      logger.info('Resume processed successfully', {
+        filename: result.filename,
+        size: result.size,
+        extractedLength: result.extractedLength
+      });
+      
       res.json({
         success: true,
-        resumeText: response.data.text,
-        filename: response.data.filename || req.file.originalname,
+        resumeText: result.text,
+        filename: result.filename,
         message: 'Resume processed successfully'
       });
     } else {
-      throw new Error('Failed to extract text from resume');
+      logger.error('Resume processing failed', {
+        filename: result.filename,
+        error: result.error
+      });
+      
+      return res.status(400).json({
+        success: false,
+        message: result.error || 'Failed to process resume file'
+      });
     }
     
   } catch (error) {
     logger.error('Resume upload error:', error);
     
-    if (error.code === 'ECONNREFUSED') {
-      return res.status(503).json({
-        success: false,
-        message: 'Resume processing service is unavailable. Please try again later.'
-      });
-    }
-    
-    if (error.response?.status === 400) {
-      return res.status(400).json({
-        success: false,
-        message: error.response.data?.detail || 'Invalid file format'
-      });
-    }
-    
-    next(new AppError('Failed to process resume', 500));
+    // Handle general file processing errors
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while processing the resume. Please try again.'
+    });
   }
 });
 
@@ -176,10 +171,15 @@ router.get('/stats', async (req, res, next) => {
 
 // Initialize session and get first question
 router.post('/get-session', async (req, res, next) => {
+  const requestId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  console.log(`GET_SESSION_CALLED [${requestId}] get-session API called`);
+  
   try {
     const { userData, action } = req.body;
+    console.log(`REQUEST_DATA [${requestId}] Processing session request`);
     
     if (!userData) {
+      console.log(`❌ [${requestId}] No user data provided`);
       return res.status(400).json({
         success: false,
         message: 'User data is required'
@@ -189,8 +189,12 @@ router.post('/get-session', async (req, res, next) => {
     let session;
     
     if (action === 'start') {
+      console.log(`🔄 [${requestId}] Starting new session for:`, userData.email);
+      
       // Check for recent sessions from the same user (within last 5 minutes)
       const recentThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes ago
+      console.log(`🔍 [${requestId}] Checking for recent sessions after:`, recentThreshold);
+      
       const existingRecentSession = await Session.findOne({
         'userDetails.email': userData.email || 'candidate@example.com',
         startedAt: { $gte: recentThreshold },
@@ -198,6 +202,7 @@ router.post('/get-session', async (req, res, next) => {
       }).sort({ startedAt: -1 });
       
       if (existingRecentSession) {
+        console.log(`⚠️ [${requestId}] Found recent session:`, existingRecentSession.sessionId);
         logger.info(`Returning existing recent session: ${existingRecentSession.sessionId}`);
         
         // Get the first question from existing session
@@ -205,6 +210,7 @@ router.post('/get-session', async (req, res, next) => {
           ? existingRecentSession.questions[0].question
           : `Hello ${existingRecentSession.userDetails.name}! I'm excited to interview you today for the ${existingRecentSession.roleName} position. Let's start with a simple question: Can you tell me about yourself and why you're interested in this position?`;
         
+        console.log(`♻️ [${requestId}] Returning existing session with first question`);
         return res.json({
           success: true,
           sessionId: existingRecentSession.sessionId,
@@ -213,12 +219,16 @@ router.post('/get-session', async (req, res, next) => {
         });
       }
       
+      console.log(`🆕 [${requestId}] Creating new session...`);
+      
       // Generate a unique session ID
       const newSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      console.log(`🆔 [${requestId}] Generated session ID:`, newSessionId);
       
       // Check if session already exists (prevent duplicates)
       const existingSession = await Session.findOne({ sessionId: newSessionId });
       if (existingSession) {
+        console.log(`⚠️ [${requestId}] Duplicate session ID detected:`, newSessionId);
         logger.warn(`Duplicate session ID detected: ${newSessionId}`);
         return res.status(409).json({
           success: false,
@@ -226,6 +236,7 @@ router.post('/get-session', async (req, res, next) => {
         });
       }
       
+      console.log(`💾 [${requestId}] Creating session document...`);
       // Create new session
       session = new Session({
         sessionId: newSessionId,
@@ -244,15 +255,20 @@ router.post('/get-session', async (req, res, next) => {
       });
       
       await session.save();
+      console.log(`💾 [${requestId}] New session saved:`, newSessionId);
       logger.info(`New session created: ${newSessionId}`);
       
       // Generate first question using FastAPI AI service
       let firstQuestion = `Hello ${session.userDetails.name}! I'm excited to interview you today for the ${session.roleName} position. Let's start with a simple question: Can you tell me about yourself and why you're interested in this position?`;
+      console.log(`📝 [${requestId}] Default question prepared`);
       
       try {
+        console.log(`🤖 [${requestId}] Calling FastAPI for AI question...`);
+        console.log(`🤖 [${requestId}] Session data: sessionId=${session.sessionId}, resumeLength=${session.resumeText ? session.resumeText.length : 0}, jobDescLength=${session.jobDescription ? session.jobDescription.length : 0}`);
+        
         // Call FastAPI backend to generate AI question
         const axios = require('axios');
-        const aiResponse = await axios.post('http://localhost:8000/api/generate-question', {
+        const requestPayload = {
           session_id: session.sessionId,
           resume_text: session.resumeText,
           job_description: session.jobDescription,
@@ -260,10 +276,17 @@ router.post('/get-session', async (req, res, next) => {
           question_number: 1,
           previous_responses: [],
           covered_topics: []
-        }, { timeout: 10000 });
+        };
+        
+        console.log(`🤖 [${requestId}] Sending request to FastAPI AI service`);
+        
+        const aiResponse = await axios.post('http://localhost:8000/api/generate-question', requestPayload, { timeout: 10000 });
+        
+        console.log(`🤖 [${requestId}] FastAPI response received:`, aiResponse.data.success ? 'Success' : 'Failed');
         
         if (aiResponse.data.success && aiResponse.data.question) {
           firstQuestion = aiResponse.data.question;
+          console.log(`✅ [${requestId}] AI question generated successfully`);
           logger.info(`AI question generated for session: ${session.sessionId}`);
           
           // Save the AI-generated question to the session
@@ -279,6 +302,7 @@ router.post('/get-session', async (req, res, next) => {
           await session.save();
         }
       } catch (aiError) {
+        console.log(`⚠️ [${requestId}] AI question generation failed:`, aiError.message);
         logger.warn('Failed to generate AI question, using fallback:', aiError.message);
         // Use fallback question but still save it
         session.questions.push({
@@ -291,8 +315,10 @@ router.post('/get-session', async (req, res, next) => {
         
         session.currentQuestionNumber = 1;
         await session.save();
+        console.log(`💾 [${requestId}] Session saved with fallback question`);
       }
       
+      console.log(`📤 [${requestId}] Sending response with question:`, firstQuestion.substring(0, 50) + '...');
       res.json({
         success: true,
         sessionId: session.sessionId,
@@ -301,6 +327,7 @@ router.post('/get-session', async (req, res, next) => {
       });
       
     } else {
+      console.log(`❌ [${requestId}] Invalid action:`, action);
       return res.status(400).json({
         success: false,
         message: 'Invalid action'
@@ -308,6 +335,7 @@ router.post('/get-session', async (req, res, next) => {
     }
     
   } catch (error) {
+    console.log(`💥 [${requestId}] Error in get-session:`, error);
     logger.error('Error in get-session:', error);
     next(error);
   }
@@ -315,10 +343,18 @@ router.post('/get-session', async (req, res, next) => {
 
 // Generate next question
 router.post('/generate-next-question', async (req, res, next) => {
+  const requestStartTime = Date.now();
+  const requestId = `req_${requestStartTime}_${Math.random().toString(36).substr(2, 9)}`;
+  console.log(`[BACKEND] ${requestId} - /generate-next-question endpoint called at ${requestStartTime}`);
+  console.log(`[BACKEND] ${requestId} - Request body:`, JSON.stringify(req.body, null, 2));
+  
   try {
     const { sessionId, responseText } = req.body;
     
+    console.log(`[BACKEND] ${requestId} - Processing sessionId: ${sessionId}, responseText length: ${responseText?.length || 0}`);
+    
     if (!sessionId) {
+      console.log(`[BACKEND] ${requestId} - Missing sessionId, returning 400`);
       return res.status(400).json({
         success: false,
         message: 'Session ID is required'
@@ -326,13 +362,17 @@ router.post('/generate-next-question', async (req, res, next) => {
     }
     
     // Find the session
+    console.log(`[BACKEND] ${requestId} - Looking up session: ${sessionId}`);
     const session = await Session.findOne({ sessionId });
     if (!session) {
+      console.log(`[BACKEND] ${requestId} - Session not found: ${sessionId}`);
       return res.status(404).json({
         success: false,
         message: 'Session not found'
       });
     }
+    
+    console.log(`[BACKEND] ${requestId} - Found session. Current question number: ${session.currentQuestionNumber}, responses count: ${session.responses.length}`);
     
     // Save the response if provided
     if (responseText) {
@@ -342,6 +382,7 @@ router.post('/generate-next-question', async (req, res, next) => {
         timestamp: new Date()
       };
       
+      console.log(`[BACKEND] ${requestId} - Saving response for question ${session.currentQuestionNumber}`);
       session.responses.push(responseData);
       
       // Store response in Redis for scoring
@@ -351,15 +392,18 @@ router.post('/generate-next-question', async (req, res, next) => {
           const redisKey = `interview:${sessionId}:responses`;
           await redisClient.rPush(redisKey, JSON.stringify(responseData));
           await redisClient.expire(redisKey, parseInt(process.env.REDIS_TTL) || 3600);
+          console.log(`[BACKEND] ${requestId} - Response stored in Redis for session: ${sessionId}`);
           logger.info(`Response stored in Redis for session: ${sessionId}`);
         }
       } catch (redisError) {
+        console.log(`[BACKEND] ${requestId} - Failed to store response in Redis:`, redisError.message);
         logger.warn('Failed to store response in Redis:', redisError.message);
       }
     }
     
     // Check if we should end the interview
     if (session.currentQuestionNumber >= 10) {
+      console.log(`[BACKEND] ${requestId} - Interview completed (question ${session.currentQuestionNumber} >= 10)`);
       session.status = 'completed';
       session.completedAt = new Date();
       await session.save();
@@ -372,9 +416,11 @@ router.post('/generate-next-question', async (req, res, next) => {
     }
     
     const nextQuestionNumber = session.currentQuestionNumber + 1;
+    console.log(`[BACKEND] ${requestId} - Next question number will be: ${nextQuestionNumber}`);
     
     // Generate next question using AI
     let nextQuestion = `Question ${nextQuestionNumber}: Tell me about a challenging project you worked on.`;
+    console.log(`[BACKEND] ${requestId} - Default fallback question prepared`);
     
     try {
       const axios = require('axios');
@@ -387,9 +433,11 @@ router.post('/generate-next-question', async (req, res, next) => {
           const redisKey = `interview:${sessionId}:responses`;
           const redisData = await redisClient.lRange(redisKey, 0, -1);
           redisResponses = redisData.map(data => JSON.parse(data));
+          console.log(`[BACKEND] ${requestId} - Retrieved ${redisResponses.length} responses from Redis for session: ${sessionId}`);
           logger.info(`Retrieved ${redisResponses.length} responses from Redis for session: ${sessionId}`);
         }
       } catch (redisError) {
+        console.log(`[BACKEND] ${requestId} - Failed to retrieve responses from Redis:`, redisError.message);
         logger.warn('Failed to retrieve responses from Redis:', redisError.message);
       }
       
@@ -403,7 +451,18 @@ router.post('/generate-next-question', async (req, res, next) => {
       // Sort by question number and get latest responses
       const sortedResponses = allResponses.sort((a, b) => a.question_number - b.question_number);
       
-      const aiResponse = await axios.post('http://localhost:8000/api/generate-question', {
+      console.log(`[BACKEND] ${requestId} - === AI QUESTION GENERATION DEBUG START ===`);
+      console.log(`[BACKEND] ${requestId} - Calling FastAPI for AI question generation...`);
+      console.log(`[BACKEND] ${requestId} - Session data:`);
+      console.log(`[BACKEND] ${requestId} - sessionId: ${session.sessionId}`);
+      console.log(`[BACKEND] ${requestId} - resumeText length: ${session.resumeText ? session.resumeText.length : 0}`);
+      console.log(`[BACKEND] ${requestId} - jobDescription length: ${session.jobDescription ? session.jobDescription.length : 0}`);
+      console.log(`[BACKEND] ${requestId} - roleName: ${session.roleName}`);
+      console.log(`[BACKEND] ${requestId} - nextQuestionNumber: ${nextQuestionNumber}`);
+      console.log(`[BACKEND] ${requestId} - sortedResponses count: ${sortedResponses.length}`);
+      console.log(`[BACKEND] ${requestId} - resumeLength: ${session.resumeText ? session.resumeText.length : 0}, jobDescLength: ${session.jobDescription ? session.jobDescription.length : 0}`);
+      
+      const requestPayload = {
         session_id: session.sessionId,
         resume_text: session.resumeText,
         job_description: session.jobDescription,
@@ -411,10 +470,18 @@ router.post('/generate-next-question', async (req, res, next) => {
         question_number: nextQuestionNumber,
         previous_responses: sortedResponses,
         covered_topics: session.questions.map(q => q.topic).filter(Boolean)
-      }, { timeout: 10000 });
+      };
+      
+      console.log(`[BACKEND] ${requestId} - Sending request to FastAPI AI service`);
+      
+      const aiResponse = await axios.post('http://localhost:8000/api/generate-question', requestPayload, { timeout: 10000 });
+      
+      console.log(`[BACKEND] ${requestId} - FastAPI response: ${aiResponse.data.success ? 'Success' : 'Failed'}`);
       
       if (aiResponse.data.success && aiResponse.data.question) {
         nextQuestion = aiResponse.data.question;
+        
+        console.log(`[BACKEND] ${requestId} - Using AI-generated question`);
         
         // Save the AI-generated question
         session.questions.push({
@@ -426,6 +493,7 @@ router.post('/generate-next-question', async (req, res, next) => {
         });
       }
     } catch (aiError) {
+      console.log(`[BACKEND] ${requestId} - AI question generation failed:`, aiError.message);
       logger.warn('Failed to generate AI question, using fallback:', aiError.message);
       // Save fallback question
       session.questions.push({
@@ -437,17 +505,24 @@ router.post('/generate-next-question', async (req, res, next) => {
       });
     }
     
+    console.log(`[BACKEND] ${requestId} - Updating session with question ${nextQuestionNumber}`);
     session.currentQuestionNumber = nextQuestionNumber;
     await session.save();
     
-    res.json({
+    const responseData = {
       success: true,
       question: nextQuestion,
       question_number: nextQuestionNumber,
       interview_completed: false
-    });
+    };
+    
+    console.log(`[BACKEND] ${requestId} - Sending response:`, responseData);
+    console.log(`[BACKEND] ${requestId} - Request completed in ${Date.now() - requestStartTime}ms`);
+    
+    res.json(responseData);
     
   } catch (error) {
+    console.log(`[BACKEND] ${requestId} - Error in generate-next-question:`, error);
     logger.error('Error generating next question:', error);
     next(error);
   }

@@ -1,8 +1,15 @@
 # PrepStart AI Interview Platform - Backend Foundation
 
-A comprehensive backend architecture for an AI-powered interview platform built with Node.js (Express) and FastAPI (Python), featuring real-time communication, AI question generation, speech-to-text processing, and robust cloud integrations.
+A comprehensive backend architecture for an AI-powered interview platform built with Node.js (Express), FastAPI (Python), and centralized logging, featuring real-time communication, AI question generation, speech-to-text processing, and robust cloud integrations.
 
 ## 🏗️ Architecture Overview
+
+### **Logging Backend** (Port 5002)
+- **Express.js** centralized logging service
+- **RabbitMQ Consumer** for log aggregation from all services
+- **WebSocket Streaming** for real-time log monitoring (Port 5003)
+- **Log Dashboard** for visual log monitoring
+- **Structured Logging** with service identification and state tracking
 
 ### **Node.js Backend** (Port 5000)
 - **Express.js** server with RESTful APIs
@@ -33,10 +40,11 @@ setup.bat
 ```
 
 This will:
-- Install Node.js dependencies
+- Install Node.js dependencies (backend-server)
+- Install Node.js dependencies (logging-backend)
 - Create Python virtual environment
 - Install Python dependencies
-- Set up log directories
+- Set up log directories for all services
 - Pull Docker images
 
 ### 2. Start All Services
@@ -45,6 +53,7 @@ start-all.bat
 ```
 
 This starts:
+- Logging backend (port 5002)
 - Infrastructure services (Docker: RabbitMQ, Redis, MongoDB)
 - FastAPI backend (port 8000)
 - Node.js backend (port 5000)

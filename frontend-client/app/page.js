@@ -55,6 +55,20 @@ export default function Home() {
     }
   }, []);
 
+  // Global error handler for browser permission errors
+  useEffect(() => {
+    const handleError = (event) => {
+      // Suppress common browser permission errors
+      if (event.message && event.message.includes('Permissions check')) {
+        event.preventDefault();
+        return true;
+      }
+    };
+    
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
+  }, []);
+
   const handleStageChange = (newStage, data = {}) => {
     setCurrentStage(newStage);
     

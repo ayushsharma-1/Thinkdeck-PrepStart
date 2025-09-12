@@ -1,7 +1,7 @@
 import os
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import uvicorn
@@ -10,8 +10,10 @@ from dotenv import load_dotenv
 from controllers.question_controller import router as question_router
 from controllers.speech_controller import router as speech_router
 from controllers.evaluation_controller import router as evaluation_router
+from controllers.resume_controller import router as resume_router
 from services.rabbitmq_service import RabbitMQService
 from utils.logger import setup_logger
+import time
 
 # Load environment variables
 load_dotenv()
@@ -62,10 +64,41 @@ app.add_middleware(
 # Compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    request_id = f"{int(start_time * 1000)}-{id(request)}"
+    
+    # Log incoming request
+    logger.info("HTTP Request", extra={
+        'request_id': request_id,
+        'method': request.method,
+        'url': str(request.url),
+        'client_ip': request.client.host if request.client else 'unknown',
+        'user_agent': request.headers.get('user-agent', 'unknown'),
+        'content_type': request.headers.get('content-type', 'unknown')
+    })
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Log response
+    process_time = time.time() - start_time
+    logger.info("HTTP Response", extra={
+        'request_id': request_id,
+        'status_code': response.status_code,
+        'process_time': f"{process_time:.4f}s",
+        'response_headers': dict(response.headers)
+    })
+    
+    return response
+
 # Include routers
 app.include_router(question_router, prefix="/api", tags=["questions"])
 app.include_router(speech_router, prefix="/api", tags=["speech"])
 app.include_router(evaluation_router, prefix="/api", tags=["evaluation"])
+app.include_router(resume_router, prefix="/api", tags=["resume"])
 
 @app.get("/health")
 async def health_check():

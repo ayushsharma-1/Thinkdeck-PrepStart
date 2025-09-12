@@ -1,6 +1,7 @@
 const winston = require('winston');
 const DailyRotateFile = require('winston-daily-rotate-file');
 const path = require('path');
+const axios = require('axios');
 
 // Define log levels
 const levels = {
@@ -21,6 +22,54 @@ const colors = {
 };
 
 winston.addColors(colors);
+
+// Custom transport for real-time logging backend
+class LoggingBackendTransport extends winston.Transport {
+  constructor(options = {}) {
+    super(options);
+    this.name = 'LoggingBackendTransport';
+    this.backendUrl = options.url || 'http://localhost:5002/api/logs';
+    this.serviceName = options.serviceName || 'backend-server';
+    this.enabled = true;
+  }
+
+  async log(info, callback) {
+    if (!this.enabled) {
+      callback();
+      return;
+    }
+
+    try {
+      const logData = {
+        timestamp: info.timestamp || new Date().toISOString(),
+        level: info.level,
+        message: info.message,
+        service: this.serviceName,
+        metadata: {
+          ...info,
+          level: undefined,
+          message: undefined,
+          timestamp: undefined
+        }
+      };
+
+      // Send to logging backend asynchronously (don't block)
+      axios.post(this.backendUrl, logData, { 
+        timeout: 500,
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(error => {
+        if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+          this.enabled = false; // Disable temporarily
+          setTimeout(() => { this.enabled = true; }, 10000); // Re-enable after 10s
+        }
+      });
+      
+      callback();
+    } catch (error) {
+      callback(error);
+    }
+  }
+}
 
 // Custom format for logs
 const format = winston.format.combine(
@@ -48,7 +97,7 @@ const transports = [
     maxSize: process.env.LOG_MAX_SIZE || '20m',
     maxFiles: process.env.LOG_MAX_FILES || '14d'
   }),
-  
+
   // Combined log file
   new DailyRotateFile({
     filename: path.join(__dirname, '../logs/combined-%DATE%.log'),
@@ -57,6 +106,12 @@ const transports = [
     json: false,
     maxSize: process.env.LOG_MAX_SIZE || '20m',
     maxFiles: process.env.LOG_MAX_FILES || '14d'
+  }),
+
+  // Real-time logging backend transport
+  new LoggingBackendTransport({
+    url: 'http://localhost:5002/api/logs',
+    serviceName: 'backend-server'
   })
 ];
 

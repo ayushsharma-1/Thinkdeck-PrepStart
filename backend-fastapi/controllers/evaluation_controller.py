@@ -54,17 +54,43 @@ async def evaluate_interview(request: EvaluationRequest):
         return EvaluationResponse(
             success=True,
             session_id=request.session_id,
+            # Core scores
             overall_score=evaluation.get("overall_score", 0),
             technical_score=evaluation.get("technical_score", 0),
             communication_score=evaluation.get("communication_score", 0),
             problem_solving_score=evaluation.get("problem_solving_score", 0),
             cultural_fit_score=evaluation.get("cultural_fit_score", 0),
+            
+            # Additional detailed scores
+            job_based_skills_score=evaluation.get("job_based_skills_score", 0),
+            leadership_score=evaluation.get("leadership_score", 0),
+            adaptability_score=evaluation.get("adaptability_score", 0),
+            creativity_score=evaluation.get("creativity_score", 0),
+            time_management_score=evaluation.get("time_management_score", 0),
+            domain_knowledge_score=evaluation.get("domain_knowledge_score", 0),
+            
+            # Qualitative assessment
             strengths=evaluation.get("strengths", []),
             weaknesses=evaluation.get("weaknesses", []),
             feedback=evaluation.get("feedback", ""),
             recommendations=evaluation.get("recommendations", []),
+            
+            # Detailed analysis
             detailed_analysis=evaluation.get("detailed_analysis", {}),
-            processing_time=evaluation.get("processing_time", 0)
+            technical_skills_breakdown=evaluation.get("technical_skills_breakdown", {}),
+            soft_skills_breakdown=evaluation.get("soft_skills_breakdown", {}),
+            job_specific_evaluation={
+                "role_alignment": evaluation.get("overall_score", 0),
+                "requirements_match": evaluation.get("job_based_skills_score", 0),
+                "growth_potential": evaluation.get("adaptability_score", 0)
+            },
+            
+            # Metadata
+            processing_time=evaluation.get("processing_time", 0),
+            total_questions=evaluation.get("total_questions", 0),
+            questions_answered=evaluation.get("questions_answered", 0),
+            interview_duration=evaluation.get("interview_duration", 0),
+            confidence_level=evaluation.get("confidence_level", "Medium")
         )
         
     except Exception as e:

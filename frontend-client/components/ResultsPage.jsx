@@ -1,31 +1,17 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { 
-  CheckCircle, 
-  XCircle, 
-  Star, 
-  Clock, 
-  User, 
-  Briefcase,
-  TrendingUp,
-  TrendingDown,
-  Award,
-  AlertTriangle,
-  Download,
-  Share2,
-  RotateCcw
-} from 'lucide-react';
+import { CheckCircle, XCircle, Star, TrendingUp, AlertTriangle, Trophy, Target, MessageSquare, RotateCcw, Download, Brain, Users, Clock, Lightbulb, Award } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ResultsPage = ({ onRestart, onExit }) => {
   const [results, setResults] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [violations, setViolations] = useState({ tabSwitch: 0, permissionDenied: 0 });
+  const [violations, setViolations] = useState([]);
 
   useEffect(() => {
     loadResults();
@@ -36,35 +22,63 @@ const ResultsPage = ({ onRestart, onExit }) => {
     try {
       const storedResults = localStorage.getItem('interviewResults');
       if (storedResults) {
-        setResults(JSON.parse(storedResults));
+        const parsedResults = JSON.parse(storedResults);
+        setResults(parsedResults);
       } else {
-        // Fallback mock results
+        // Enhanced fallback with comprehensive scoring
         setResults({
-          overallScore: 7.5,
-          skillScores: {
-            technical: 8,
-            communication: 7,
-            problemSolving: 8,
-            culturalFit: 7
+          success: true,
+          overall_score: 7.5,
+          technical_score: 8.0,
+          communication_score: 7.5,
+          problem_solving_score: 8.0,
+          cultural_fit_score: 7.0,
+          job_based_skills_score: 7.5,
+          leadership_score: 6.5,
+          adaptability_score: 8.0,
+          creativity_score: 7.0,
+          time_management_score: 7.5,
+          domain_knowledge_score: 7.0,
+          technical_skills_breakdown: {
+            "Programming": 8.0,
+            "System Design": 7.5,
+            "Debugging": 8.5,
+            "Best Practices": 7.0
+          },
+          soft_skills_breakdown: {
+            "Communication": 7.5,
+            "Teamwork": 7.0,
+            "Learning Attitude": 8.0,
+            "Professional Maturity": 7.5
           },
           strengths: [
-            'Strong technical knowledge',
-            'Clear communication',
-            'Good problem-solving approach'
+            'Strong technical knowledge and programming skills',
+            'Clear communication and explanation ability',
+            'Good problem-solving approach',
+            'Shows enthusiasm for learning'
           ],
-          improvements: [
-            'Could elaborate more on past experiences',
-            'Consider asking more questions about the role'
+          weaknesses: [
+            'Could provide more specific examples',
+            'Time management could be improved',
+            'Leadership experience needs development'
           ],
-          feedback: 'Great interview performance! You demonstrated solid technical skills and communicated your thoughts clearly. With some minor improvements in storytelling and engagement, you\'ll be even stronger in future interviews.',
-          interviewDuration: '28 minutes 45 seconds',
-          questionsAnswered: 8,
-          responseQuality: 'Good'
+          feedback: 'Overall good performance with strong technical skills. Focus on providing more concrete examples and developing leadership qualities.',
+          recommendations: [
+            'Practice explaining technical concepts with real examples',
+            'Work on leadership and mentoring opportunities',
+            'Improve time management skills',
+            'Continue learning new technologies'
+          ],
+          confidence_level: "High",
+          total_questions: 3,
+          questions_answered: 3,
+          interview_duration: 15.5,
+          timestamp: new Date().toISOString()
         });
       }
     } catch (error) {
       console.error('Error loading results:', error);
-      toast.error('Failed to load interview results');
+      setResults(null);
     } finally {
       setIsLoading(false);
     }
@@ -74,75 +88,11 @@ const ResultsPage = ({ onRestart, onExit }) => {
     try {
       const storedViolations = localStorage.getItem('interviewViolations');
       if (storedViolations) {
-        setViolations(JSON.parse(storedViolations));
+        setViolations(JSON.parse(storedViolations) || []);
       }
     } catch (error) {
       console.error('Error loading violations:', error);
-    }
-  };
-
-  const getScoreColor = (score) => {
-    if (score >= 8) return 'text-green-600';
-    if (score >= 6) return 'text-yellow-600';
-    return 'text-red-600';
-  };
-
-  const getScoreBadgeVariant = (score) => {
-    if (score >= 8) return 'default';
-    if (score >= 6) return 'secondary';
-    return 'destructive';
-  };
-
-  const getOverallRating = (score) => {
-    if (score >= 9) return { label: 'Excellent', icon: Award, color: 'text-green-600' };
-    if (score >= 8) return { label: 'Very Good', icon: TrendingUp, color: 'text-green-600' };
-    if (score >= 7) return { label: 'Good', icon: CheckCircle, color: 'text-blue-600' };
-    if (score >= 6) return { label: 'Fair', icon: TrendingDown, color: 'text-yellow-600' };
-    return { label: 'Needs Improvement', icon: XCircle, color: 'text-red-600' };
-  };
-
-  const downloadResults = () => {
-    try {
-      const resultsData = {
-        ...results,
-        violations,
-        generatedAt: new Date().toISOString()
-      };
-      
-      const dataStr = JSON.stringify(resultsData, null, 2);
-      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-      
-      const exportFileDefaultName = `interview-results-${new Date().toISOString().split('T')[0]}.json`;
-      
-      const linkElement = document.createElement('a');
-      linkElement.setAttribute('href', dataUri);
-      linkElement.setAttribute('download', exportFileDefaultName);
-      linkElement.click();
-      
-      toast.success('Results downloaded successfully');
-    } catch (error) {
-      console.error('Download failed:', error);
-      toast.error('Failed to download results');
-    }
-  };
-
-  const shareResults = () => {
-    try {
-      const shareText = `Interview Results: ${results.overallScore}/10 overall score. Areas of strength: ${results.strengths.join(', ')}. Completed via PrepStart AI.`;
-      
-      if (navigator.share) {
-        navigator.share({
-          title: 'Interview Results - PrepStart AI',
-          text: shareText,
-          url: window.location.href
-        });
-      } else {
-        navigator.clipboard.writeText(shareText);
-        toast.success('Results copied to clipboard');
-      }
-    } catch (error) {
-      console.error('Share failed:', error);
-      toast.error('Failed to share results');
+      setViolations([]);
     }
   };
 
@@ -150,8 +100,8 @@ const ResultsPage = ({ onRestart, onExit }) => {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-lg text-gray-600">Generating your interview results...</p>
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
+          <h2 className="text-2xl font-semibold text-gray-800 mt-4">Processing Results...</h2>
         </div>
       </div>
     );
@@ -160,142 +110,249 @@ const ResultsPage = ({ onRestart, onExit }) => {
   if (!results) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Card className="w-full max-w-md">
-          <CardContent className="text-center p-6">
-            <AlertTriangle className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No Results Found</h3>
-            <p className="text-gray-600 mb-4">Interview results could not be loaded.</p>
-            <Button onClick={onRestart}>Start New Interview</Button>
-          </CardContent>
-        </Card>
+        <div className="text-center">
+          <XCircle className="w-24 h-24 text-red-500 mx-auto mb-4" />
+          <h2 className="text-3xl font-bold text-gray-800 mb-4">Results Not Available</h2>
+          <Button onClick={onExit}>Back to Home</Button>
+        </div>
       </div>
     );
   }
 
-  const rating = getOverallRating(results.overallScore);
-  const RatingIcon = rating.icon;
+  const getScoreColor = (score) => {
+    if (score >= 8) return 'text-green-600';
+    if (score >= 6) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  const getScoreBadgeColor = (score) => {
+    if (score >= 8) return 'bg-green-100 text-green-800';
+    if (score >= 6) return 'bg-yellow-100 text-yellow-800';
+    return 'bg-red-100 text-red-800';
+  };
+
+  const ScoreCard = ({ title, score, icon: Icon, description }) => (
+    <Card className="hover:shadow-lg transition-shadow">
+      <CardContent className="p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-3">
+            <Icon className="w-8 h-8 text-blue-600" />
+            <div>
+              <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
+              {description && <p className="text-sm text-gray-600">{description}</p>}
+            </div>
+          </div>
+          <Badge className={`text-xl font-bold px-4 py-2 ${getScoreBadgeColor(score)}`}>
+            {score?.toFixed(1) || '0.0'}
+          </Badge>
+        </div>
+        <Progress value={score * 10} className="h-3" />
+      </CardContent>
+    </Card>
+  );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 p-4">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-8">
+      <div className="max-w-7xl mx-auto space-y-8">
         {/* Header */}
-        <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-xl">
-          <CardHeader className="text-center pb-6">
-            <div className="flex items-center justify-center mb-4">
-              <RatingIcon className={`w-16 h-16 ${rating.color}`} />
+        <div className="text-center">
+          <Trophy className="w-16 h-16 text-blue-600 mx-auto mb-4" />
+          <h1 className="text-4xl font-bold text-gray-800 mb-2">Interview Complete!</h1>
+          <div className="flex items-center justify-center space-x-4 text-sm text-gray-600">
+            <div className="flex items-center space-x-1">
+              <Clock className="w-4 h-4" />
+              <span>{results.interview_duration?.toFixed(1) || 'N/A'} minutes</span>
             </div>
-            <CardTitle className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              Interview Complete!
-            </CardTitle>
-            <CardDescription className="text-xl text-gray-600 mt-2">
-              Here's your detailed performance analysis
-            </CardDescription>
-          </CardHeader>
-          
-          <CardContent>
-            <div className="text-center">
-              <div className="text-6xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                {results.overallScore}/10
-              </div>
-              <Badge variant={getScoreBadgeVariant(results.overallScore)} className="text-lg px-4 py-2">
-                {rating.label}
-              </Badge>
+            <div className="flex items-center space-x-1">
+              <MessageSquare className="w-4 h-4" />
+              <span>{results.questions_answered || 0}/{results.total_questions || 0} questions</span>
             </div>
-          </CardContent>
-        </Card>
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Skill Breakdown */}
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center text-xl">
-                <TrendingUp className="w-6 h-6 mr-2 text-blue-600" />
-                Skill Assessment
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {Object.entries(results.skillScores).map(([skill, score]) => (
-                <div key={skill} className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium capitalize">{skill.replace(/([A-Z])/g, ' $1').trim()}</span>
-                    <Badge variant={getScoreBadgeVariant(score)}>
-                      {score}/10
-                    </Badge>
-                  </div>
-                  <Progress value={score * 10} className="h-2" />
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          {/* Interview Stats */}
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center text-xl">
-                <Clock className="w-6 h-6 mr-2 text-green-600" />
-                Interview Statistics
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-blue-600">{results.interviewDuration}</div>
-                  <div className="text-sm text-gray-600">Duration</div>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-green-600">{results.questionsAnswered}</div>
-                  <div className="text-sm text-gray-600">Questions Answered</div>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-purple-600">{results.responseQuality}</div>
-                  <div className="text-sm text-gray-600">Response Quality</div>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className={`text-2xl font-bold ${violations.tabSwitch + violations.permissionDenied === 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {violations.tabSwitch + violations.permissionDenied}
-                  </div>
-                  <div className="text-sm text-gray-600">Violations</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            <div className="flex items-center space-x-1">
+              <Award className="w-4 h-4" />
+              <span>Confidence: {results.confidence_level || 'Medium'}</span>
+            </div>
+          </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Strengths */}
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-xl">
+        {/* Overall Score */}
+        <Card className="bg-gradient-to-r from-blue-500 to-purple-600 text-white">
+          <CardHeader className="text-center">
+            <CardTitle className="text-5xl font-bold mb-2">
+              {results.overall_score?.toFixed(1) || '0.0'}/10
+            </CardTitle>
+            <p className="text-xl opacity-90">Overall Interview Score</p>
+          </CardHeader>
+        </Card>
+
+        {/* Core Skills */}
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+            <Brain className="w-7 h-7 text-blue-600 mr-3" />
+            Core Assessment Areas
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <ScoreCard 
+              title="Technical Skills" 
+              score={results.technical_score} 
+              icon={Target}
+              description="Programming & problem solving"
+            />
+            <ScoreCard 
+              title="Communication" 
+              score={results.communication_score} 
+              icon={MessageSquare}
+              description="Clarity and articulation"
+            />
+            <ScoreCard 
+              title="Problem Solving" 
+              score={results.problem_solving_score} 
+              icon={Brain}
+              description="Analytical thinking"
+            />
+            <ScoreCard 
+              title="Cultural Fit" 
+              score={results.cultural_fit_score} 
+              icon={Users}
+              description="Team collaboration"
+            />
+            <ScoreCard 
+              title="Job-Based Skills" 
+              score={results.job_based_skills_score} 
+              icon={Award}
+              description="Role-specific competencies"
+            />
+            <ScoreCard 
+              title="Leadership" 
+              score={results.leadership_score} 
+              icon={TrendingUp}
+              description="Initiative and guidance"
+            />
+          </div>
+        </div>
+
+        {/* Additional Skills */}
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+            <Star className="w-7 h-7 text-blue-600 mr-3" />
+            Additional Assessment Areas
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <ScoreCard 
+              title="Adaptability" 
+              score={results.adaptability_score} 
+              icon={RotateCcw}
+              description="Flexibility"
+            />
+            <ScoreCard 
+              title="Creativity" 
+              score={results.creativity_score} 
+              icon={Lightbulb}
+              description="Innovation"
+            />
+            <ScoreCard 
+              title="Time Management" 
+              score={results.time_management_score} 
+              icon={Clock}
+              description="Efficiency"
+            />
+            <ScoreCard 
+              title="Domain Knowledge" 
+              score={results.domain_knowledge_score} 
+              icon={Trophy}
+              description="Industry expertise"
+            />
+          </div>
+        </div>
+
+        {/* Skills Breakdown */}
+        {(results.technical_skills_breakdown || results.soft_skills_breakdown) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Technical Skills Breakdown */}
+            {results.technical_skills_breakdown && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Target className="w-6 h-6 text-blue-600 mr-2" />
+                    Technical Skills Breakdown
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {Object.entries(results.technical_skills_breakdown).map(([skill, score]) => (
+                    <div key={skill} className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-gray-700">{skill}</span>
+                      <div className="flex items-center space-x-2">
+                        <Progress value={score * 10} className="w-24 h-2" />
+                        <Badge className={`text-xs ${getScoreBadgeColor(score)}`}>
+                          {score?.toFixed(1)}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Soft Skills Breakdown */}
+            {results.soft_skills_breakdown && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Users className="w-6 h-6 text-blue-600 mr-2" />
+                    Soft Skills Breakdown
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {Object.entries(results.soft_skills_breakdown).map(([skill, score]) => (
+                    <div key={skill} className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-gray-700">{skill}</span>
+                      <div className="flex items-center space-x-2">
+                        <Progress value={score * 10} className="w-24 h-2" />
+                        <Badge className={`text-xs ${getScoreBadgeColor(score)}`}>
+                          {score?.toFixed(1)}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* Strengths and Weaknesses */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <Card>
             <CardHeader>
-              <CardTitle className="flex items-center text-xl text-green-600">
+              <CardTitle className="flex items-center text-green-700">
                 <CheckCircle className="w-6 h-6 mr-2" />
-                Key Strengths
+                Strengths
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ul className="space-y-3">
-                {results.strengths.map((strength, index) => (
-                  <li key={index} className="flex items-start space-x-3">
-                    <Star className="w-5 h-5 text-yellow-500 mt-0.5 flex-shrink-0" />
-                    <span className="text-gray-700">{strength}</span>
+              <ul className="space-y-2">
+                {(results.strengths || []).map((strength, index) => (
+                  <li key={index} className="flex items-start space-x-2">
+                    <Star className="w-4 h-4 text-green-600 mt-1 flex-shrink-0" />
+                    <span className="text-sm text-gray-700">{strength}</span>
                   </li>
                 ))}
               </ul>
             </CardContent>
           </Card>
 
-          {/* Areas for Improvement */}
-          <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-xl">
+          <Card>
             <CardHeader>
-              <CardTitle className="flex items-center text-xl text-orange-600">
-                <TrendingUp className="w-6 h-6 mr-2" />
+              <CardTitle className="flex items-center text-amber-700">
+                <AlertTriangle className="w-6 h-6 mr-2" />
                 Areas for Improvement
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ul className="space-y-3">
-                {results.improvements.map((improvement, index) => (
-                  <li key={index} className="flex items-start space-x-3">
-                    <AlertTriangle className="w-5 h-5 text-orange-500 mt-0.5 flex-shrink-0" />
-                    <span className="text-gray-700">{improvement}</span>
+              <ul className="space-y-2">
+                {(results.weaknesses || []).map((weakness, index) => (
+                  <li key={index} className="flex items-start space-x-2">
+                    <TrendingUp className="w-4 h-4 text-amber-600 mt-1 flex-shrink-0" />
+                    <span className="text-sm text-gray-700">{weakness}</span>
                   </li>
                 ))}
               </ul>
@@ -303,86 +360,82 @@ const ResultsPage = ({ onRestart, onExit }) => {
           </Card>
         </div>
 
-        {/* Detailed Feedback */}
-        <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-xl">
-          <CardHeader>
-            <CardTitle className="flex items-center text-xl">
-              <User className="w-6 h-6 mr-2 text-blue-600" />
-              Detailed Feedback
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="prose max-w-none">
-              <p className="text-gray-700 leading-relaxed text-lg">
-                {results.feedback}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Violation Summary */}
-        {(violations.tabSwitch > 0 || violations.permissionDenied > 0) && (
-          <Card className="bg-red-50 border-red-200">
+        {/* Feedback */}
+        {results.feedback && (
+          <Card>
             <CardHeader>
-              <CardTitle className="flex items-center text-xl text-red-700">
+              <CardTitle className="flex items-center">
+                <MessageSquare className="w-6 h-6 text-blue-600 mr-2" />
+                Detailed Feedback
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-700 leading-relaxed">{results.feedback}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Recommendations */}
+        {results.recommendations && results.recommendations.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Lightbulb className="w-6 h-6 text-blue-600 mr-2" />
+                Recommendations
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-3">
+                {results.recommendations.map((recommendation, index) => (
+                  <li key={index} className="flex items-start space-x-2">
+                    <Badge className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full flex-shrink-0 mt-1">
+                      {index + 1}
+                    </Badge>
+                    <span className="text-sm text-gray-700">{recommendation}</span>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Security Violations */}
+        {violations && violations.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center text-red-700">
                 <AlertTriangle className="w-6 h-6 mr-2" />
-                Interview Violations Detected
+                Security Violations ({violations.length})
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {violations.tabSwitch > 0 && (
-                  <p className="text-red-600">• Tab switching detected: {violations.tabSwitch} time(s)</p>
-                )}
-                {violations.permissionDenied > 0 && (
-                  <p className="text-red-600">• Permission violations: {violations.permissionDenied} time(s)</p>
-                )}
-                <p className="text-red-700 text-sm mt-3">
-                  Note: Violations may affect your overall assessment in actual interviews.
-                </p>
+                {violations.map((violation, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
+                    <div>
+                      <span className="text-sm font-medium text-red-800">
+                        {violation.type?.replace(/_/g, ' ').toUpperCase()}
+                      </span>
+                      <p className="text-xs text-red-600 mt-1">{violation.details}</p>
+                    </div>
+                    <Badge variant="destructive" className="text-xs">
+                      Q{violation.questionNumber}
+                    </Badge>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
         )}
 
         {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Button
-            onClick={downloadResults}
-            variant="outline"
-            size="lg"
-            className="flex-1 sm:flex-none"
-          >
-            <Download className="w-5 h-5 mr-2" />
-            Download Results
-          </Button>
-          
-          <Button
-            onClick={shareResults}
-            variant="outline"
-            size="lg"
-            className="flex-1 sm:flex-none"
-          >
-            <Share2 className="w-5 h-5 mr-2" />
-            Share Results
-          </Button>
-          
-          <Button
-            onClick={onRestart}
-            size="lg"
-            className="flex-1 sm:flex-none bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-          >
+        <div className="flex justify-center gap-4 pt-8">
+          <Button onClick={onRestart} size="lg" className="px-8">
             <RotateCcw className="w-5 h-5 mr-2" />
-            New Interview
+            Take Another Interview
           </Button>
-          
-          <Button
-            onClick={onExit}
-            variant="outline"
-            size="lg"
-            className="flex-1 sm:flex-none"
-          >
-            Exit
+          <Button onClick={onExit} variant="ghost" size="lg" className="px-8">
+            Back to Home
           </Button>
         </div>
       </div>

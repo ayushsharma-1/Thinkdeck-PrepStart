@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from models.schemas import (
     QuestionGenerationRequest, 
@@ -16,14 +17,82 @@ logger = setup_logger(__name__)
 ai_service = AIService()
 question_service = QuestionService()
 
+@router.get("/debug-ai-status")
+async def debug_ai_status():
+    """Debug endpoint to check AI service status"""
+    return {
+        "groq_available": ai_service.has_groq,
+        "google_available": ai_service.has_google,
+        "groq_model": getattr(ai_service, 'groq_model', None),
+        "google_model_type": str(type(getattr(ai_service, 'google_model', None))),
+        "environment_keys": {
+            "GROQ_API_KEY": bool(os.getenv("GROQ_API_KEY")),
+            "GOOGLE_API_KEY": bool(os.getenv("GOOGLE_API_KEY"))
+        }
+    }
+
+@router.post("/debug-generate-question")
+async def debug_generate_question():
+    """Debug endpoint to test question generation with hardcoded data"""
+    
+    logger.info("Testing question generation with direct call")
+    
+    try:
+        result = await ai_service.generate_question(
+            resume_text="Software Engineer with 5 years experience in React and Node.js",
+            job_description="Looking for Senior Developer with React expertise",
+            role_name="Senior Developer",
+            question_number=1,
+            previous_responses=[],
+            covered_topics=[]
+        )
+        
+        return {
+            "success": True,
+            "result": result,
+            "message": "AI generation test completed successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"AI generation test failed: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "message": "AI generation test failed"
+        }
+
 @router.post("/generate-question", response_model=QuestionGenerationResponse)
 @handle_exceptions
 async def generate_question(request: QuestionGenerationRequest):
     """Generate a new interview question using AI providers"""
     
-    logger.info(f"Generating question for session: {request.session_id}, question number: {request.question_number}")
+    logger.info(f"CONTROLLER: ===== QUESTION GENERATION REQUEST DEBUG START =====")
+    logger.info(f"CONTROLLER: Generating question for session: {request.session_id}, question number: {request.question_number}")
+    logger.info(f"CONTROLLER: Role name: {request.role_name}")
+    logger.info(f"CONTROLLER: Resume text length: {len(request.resume_text)} chars")
+    logger.info(f"CONTROLLER: Job description length: {len(request.job_description)} chars")
+    logger.info(f"CONTROLLER: Previous responses count: {len(request.previous_responses)}")
+    logger.info(f"CONTROLLER: Covered topics: {request.covered_topics}")
+    
+    # Log resume content preview
+    if request.resume_text:
+        logger.info(f"CONTROLLER: Resume preview: {request.resume_text[:200]}...")
+    else:
+        logger.warning("CONTROLLER: RESUME TEXT IS EMPTY!")
+    
+    # Log job description preview  
+    if request.job_description:
+        logger.info(f"CONTROLLER: Job description preview: {request.job_description[:200]}...")
+    else:
+        logger.warning("CONTROLLER: JOB DESCRIPTION IS EMPTY!")
+    
+    # Log previous responses
+    for i, resp in enumerate(request.previous_responses):
+        logger.info(f"CONTROLLER: Previous response {i+1}: {str(resp)[:100]}...")
     
     try:
+        logger.info("CONTROLLER: Calling question service...")
         # Generate question using AI service
         question_response = await question_service.generate_question(
             session_id=request.session_id,
@@ -35,7 +104,9 @@ async def generate_question(request: QuestionGenerationRequest):
             covered_topics=request.covered_topics
         )
         
-        logger.info(f"Question generated successfully for session: {request.session_id}")
+        logger.info(f"CONTROLLER: Question generated successfully for session: {request.session_id}")
+        logger.info(f"CONTROLLER: Response: {question_response}")
+        logger.info(f"CONTROLLER: ===== QUESTION GENERATION REQUEST DEBUG END =====")
         return question_response
         
     except Exception as e:
