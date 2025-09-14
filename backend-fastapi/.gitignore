@@ -177,7 +177,6 @@ alembic/versions/*.py
 !alembic/versions/__init__.py
 
 # Model artifacts (if using ML models)
-models/
 *.pkl
 *.joblib
 *.model
