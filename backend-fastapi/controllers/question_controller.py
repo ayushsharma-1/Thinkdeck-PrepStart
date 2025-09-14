@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from models.schemas import (
     QuestionGenerationRequest, 
     QuestionGenerationResponse,
-    ErrorResponse
 )
 from services.ai_service import AIService
 from services.question_service import QuestionService
@@ -163,8 +162,8 @@ async def bulk_generate_questions(
             questions.append(question_response)
             
             # Update covered topics to avoid repetition
-            if question_response.topic:
-                request.covered_topics.append(question_response.topic)
+            if 'topic' in question_response and question_response['topic']:
+                request.covered_topics.append(question_response['topic'])
         
         logger.info(f"Bulk generated {len(questions)} questions for session: {request.session_id}")
         
