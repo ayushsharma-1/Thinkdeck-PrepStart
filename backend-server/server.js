@@ -2,6 +2,7 @@ const { app, server } = require('./app');
 const { connectDB } = require('./config/database');
 const { connectRedis } = require('./config/redis');
 const { connectRabbitMQ } = require('./config/rabbitmq');
+const ResponseConsumer = require('./services/responseConsumer');
 const logger = require('./utils/logger');
 
 const PORT = process.env.PORT || 5000;
@@ -24,6 +25,13 @@ async function startServer() {
     console.log('Connecting to RabbitMQ...');
     await connectRabbitMQ();
     logger.info('Connected to RabbitMQ Cloud');
+
+    // Start Response Consumer
+    console.log('Starting RabbitMQ Response Consumer...');
+    const responseConsumer = new ResponseConsumer();
+    await responseConsumer.connect();
+    await responseConsumer.startConsuming();
+    logger.info('Response Consumer started successfully');
 
     // Start the server
     console.log(`Starting server on port ${PORT}...`);

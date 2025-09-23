@@ -27,6 +27,10 @@ const connectRabbitMQ = async () => {
       durable: true
     });
 
+    await channel.assertQueue(process.env.RABBITMQ_RESPONSE_QUEUE || 'interview_response_queue', {
+      durable: true
+    });
+
     isConnected = true;
     logger.info('RabbitMQ connected successfully');
 

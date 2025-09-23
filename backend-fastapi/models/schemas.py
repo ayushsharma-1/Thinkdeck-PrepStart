@@ -24,6 +24,26 @@ class QuestionGenerationRequest(BaseModel):
             raise ValueError('Question number must be greater than 0')
         return v
 
+class UserResponseRequest(BaseModel):
+    session_id: str
+    question_number: int
+    ai_question: str
+    user_response: str
+    candidate_name: Optional[str] = ""
+    role_name: str
+    
+    @validator('session_id')
+    def validate_session_id(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError('Session ID cannot be empty')
+        return v.strip()
+
+class UserResponseResponse(BaseModel):
+    success: bool
+    message: str
+    session_id: str
+    question_number: int
+
 class QuestionGenerationResponse(BaseModel):
     success: bool
     question: Optional[str] = None

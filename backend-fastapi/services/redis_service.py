@@ -39,49 +39,54 @@ class RedisService:
             await self.connect()
             
         if not self.redis_client:
-            logger.warning("Redis not available, returning empty responses")
+            logger.warning(f"[Redis] Redis not available, returning empty responses for session_id={session_id}")
             return []
             
         try:
             redis_key = f"interview:{session_id}:responses"
+            logger.info(f"[Redis] Fetching responses for session_id={session_id} with key={redis_key}")
             response_data = await self.redis_client.lrange(redis_key, 0, -1)
             
             responses = []
-            for data in response_data:
+            for idx, data in enumerate(response_data):
                 try:
                     response = json.loads(data)
+                    logger.debug(f"[Redis] Parsed response #{idx+1} for session_id={session_id}: {response}")
                     responses.append(response)
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse response data: {str(e)}")
+                    logger.warning(f"[Redis] Failed to parse response data for session_id={session_id}: {str(e)} | Raw: {data}")
                     
-            logger.info(f"Retrieved {len(responses)} responses from Redis for session: {session_id}")
+            logger.info(f"[Redis] Retrieved {len(responses)} responses from Redis for session: {session_id}")
             return responses
             
         except Exception as e:
-            logger.error(f"Failed to get responses from Redis: {str(e)}")
+            logger.error(f"[Redis] Failed to get responses from Redis for session_id={session_id}: {str(e)}")
             return []
     
-    async def store_response(self, session_id: str, response_data: Dict[str, Any]) -> bool:
-        """Store a response in Redis"""
+    async def store_response(self, session_id: str, response_data: Dict[str, Any], ai_question: Optional[str] = None) -> bool:
+        """Store a response in Redis, including the AI-generated question"""
         if not self.redis_client:
             await self.connect()
             
         if not self.redis_client:
-            logger.warning("Redis not available, cannot store response")
+            logger.warning(f"[Redis] Redis not available, cannot store response for session_id={session_id}")
             return False
             
         try:
             redis_key = f"interview:{session_id}:responses"
+            # Add AI-generated question to response_data if provided
+            if ai_question is not None:
+                response_data['ai_question'] = ai_question
             response_json = json.dumps(response_data, default=str)
-            
+            logger.info(f"[Redis] Submitting response to Redis for session_id={session_id}, key={redis_key}, data={response_json}")
             await self.redis_client.rpush(redis_key, response_json)
             await self.redis_client.expire(redis_key, self.redis_ttl)
             
-            logger.info(f"Stored response in Redis for session: {session_id}")
+            logger.info(f"[Redis] Stored response in Redis for session: {session_id}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to store response in Redis: {str(e)}")
+            logger.error(f"[Redis] Failed to store response in Redis for session_id={session_id}: {str(e)} | Data: {response_data}")
             return False
     
     async def cleanup_session_data(self, session_id: str) -> bool:
@@ -90,24 +95,25 @@ class RedisService:
             await self.connect()
             
         if not self.redis_client:
-            logger.warning("Redis not available, cannot cleanup")
+            logger.warning(f"[Redis] Redis not available, cannot cleanup for session_id={session_id}")
             return False
             
         try:
             # Get all keys for this session
             pattern = f"interview:{session_id}:*"
+            logger.info(f"[Redis] Cleaning up session data for session_id={session_id} with pattern={pattern}")
             keys = await self.redis_client.keys(pattern)
-            
+            logger.debug(f"[Redis] Keys found for cleanup: {keys}")
             if keys:
                 deleted_count = await self.redis_client.delete(*keys)
-                logger.info(f"Deleted {deleted_count} Redis keys for session: {session_id}")
+                logger.info(f"[Redis] Deleted {deleted_count} Redis keys for session: {session_id}")
             else:
-                logger.info(f"No Redis keys found for session: {session_id}")
+                logger.info(f"[Redis] No Redis keys found for session: {session_id}")
                 
             return True
             
         except Exception as e:
-            logger.error(f"Failed to cleanup Redis data: {str(e)}")
+            logger.error(f"[Redis] Failed to cleanup Redis data for session_id={session_id}: {str(e)}")
             return False
     
     async def close(self):

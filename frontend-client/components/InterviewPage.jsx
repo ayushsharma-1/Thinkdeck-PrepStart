@@ -1,4 +1,31 @@
-'use client';
+"use client";
+import axios from "axios";
+// import { SarvamAIClient } from 'sarvamai'; // Sarvam commented out
+// Murf AI TTS function using axios and correct header
+const murfTTS = async (text) => {
+  const apiKey = process.env.NEXT_PUBLIC_MURF_API_KEY;
+  const data = {
+    text,
+    voiceId: "en-US-terrell", // Change to your preferred Murf voice
+  };
+  try {
+    const response = await axios.post(
+      "https://api.murf.ai/v1/speech/generate",
+      data,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "api-key": apiKey,
+        },
+      }
+    );
+    return response.data.audioFile; // Murf returns audioFile URL
+  } catch (error) {
+    console.error("Murf AI TTS error:", error);
+    return null;
+  }
+};
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
@@ -79,6 +106,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   const silenceTimeoutRef = useRef(null);
   const speechSynthRef = useRef(null);
   const isQuestionLoadingRef = useRef(false);
+  // SarvamAI references removed; Murf AI is now used for TTS
   
   // Security monitoring refs
   const tabSwitchCountRef = useRef(0);
@@ -725,40 +753,44 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
     };
   };
 
-  const speakQuestion = (question) => {
+  const speakQuestion = async (question) => {
     if (!isSpeakerOn || isAISpeaking) return;
-    
+    setIsAISpeaking(true);
+    let murfFailed = false;
     try {
-      const utterance = new SpeechSynthesisUtterance(question);
-      utterance.rate = 0.9;
-      utterance.pitch = 1;
-      utterance.volume = 0.8;
-      
-      utterance.onstart = () => {
-        setIsAISpeaking(true);
-      };
-      
-      utterance.onend = () => {
-        setIsAISpeaking(false);
-        // AI finished speaking - user can now manually start recording
-      };
-      
-      utterance.onerror = (error) => {
-        console.error('Speech synthesis error:', {
-          error: error || 'Unknown error',
-          message: error?.message || 'Speech synthesis failed',
-          type: error?.error || 'unknown',
-          elapsed: error?.elapsedTime || 0
-        });
+      const audioSrc = await murfTTS(question);
+      if (!audioSrc) throw new Error('No Murf audio');
+      const audio = new window.Audio(audioSrc);
+      audio.onended = () => setIsAISpeaking(false);
+      audio.onerror = (error) => {
         setIsAISpeaking(false);
         toast.error('Audio playback failed. You can still type your response.');
       };
-      
-      speechSynthRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
+      audio.play();
     } catch (error) {
-      console.error('Speech synthesis failed:', error);
-      setIsAISpeaking(false);
+      murfFailed = true;
+      console.error('Murf AI TTS error:', error);
+      toast.error('Murf AI TTS failed. Falling back to browser TTS.');
+    }
+    if (murfFailed) {
+      try {
+        const utterance = new window.SpeechSynthesisUtterance(question);
+        utterance.rate = 0.9;
+        utterance.pitch = 1;
+        utterance.volume = 0.8;
+        utterance.onstart = () => setIsAISpeaking(true);
+        utterance.onend = () => setIsAISpeaking(false);
+        utterance.onerror = (error) => {
+          setIsAISpeaking(false);
+          toast.error('Browser TTS failed. You can still type your response.');
+          console.error('Browser TTS error:', error);
+        };
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        setIsAISpeaking(false);
+        toast.error('All TTS failed. You can still type your response.');
+        console.error('Browser TTS error:', err);
+      }
     }
   };
 
@@ -1714,7 +1746,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
                 }`}>
                   <div className="flex items-start space-x-3">
                     {message.sender === 'ai' && (
-                      <div className="w-6 h-6 bg-gradient-to-r from-purple-500 to-blue-600 rounded-full flex items-center justify-center flex-shrink-0 mt-1">
+                      <div className="w-6 h-6 bg-gradient-to-r from-purple-500 to-blue-600 rounded-full flex items-center justify-center">
                         <Bot className="w-3 h-3 text-white" />
                       </div>
                     )}
