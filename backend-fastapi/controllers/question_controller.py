@@ -3,12 +3,9 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from models.schemas import (
     QuestionGenerationRequest, 
     QuestionGenerationResponse,
-    UserResponseRequest,
-    UserResponseResponse,
 )
 from services.ai_service import AIService
 from services.question_service import QuestionService
-from services.rabbitmq_service import rabbitmq_publisher
 from utils.logger import setup_logger
 from utils.error_handler import handle_exceptions, async_retry_with_timeout
 
@@ -106,18 +103,6 @@ async def generate_question(request: QuestionGenerationRequest):
             covered_topics=request.covered_topics
         )
         
-        # Send AI question to RabbitMQ queue for backend server processing
-        ai_question = question_response.get("question") if isinstance(question_response, dict) else getattr(question_response, "question", None)
-        user_response = request.previous_responses[-1] if request.previous_responses else None
-        
-        rabbitmq_publisher.publish_response(
-            session_id=request.session_id,
-            ai_question=ai_question,
-            user_response=user_response,
-            question_number=request.question_number,
-            candidate_name=getattr(request, 'candidate_name', ''),
-            role_name=request.role_name
-        )
         logger.info(f"CONTROLLER: Question generated successfully for session: {request.session_id}")
         logger.info(f"CONTROLLER: Response: {question_response}")
         logger.info(f"CONTROLLER: ===== QUESTION GENERATION REQUEST DEBUG END =====")
@@ -130,17 +115,7 @@ async def generate_question(request: QuestionGenerationRequest):
             request.role_name, 
             request.question_number
         )
-        # Send fallback question to RabbitMQ queue for backend server processing
-        user_response = request.previous_responses[-1] if request.previous_responses else None
         
-        rabbitmq_publisher.publish_response(
-            session_id=request.session_id,
-            ai_question=fallback_question,
-            user_response=user_response,
-            question_number=request.question_number,
-            candidate_name=getattr(request, 'candidate_name', ''),
-            role_name=request.role_name
-        )
         return QuestionGenerationResponse(
             success=True,
             question=fallback_question,
@@ -219,43 +194,3 @@ async def get_question_topics(role_name: str):
     except Exception as e:
         logger.error(f"Failed to get topics for role {role_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/submit-response", response_model=UserResponseResponse)
-@handle_exceptions
-async def submit_user_response(request: UserResponseRequest):
-    """Submit user response and send to RabbitMQ queue for processing"""
-    
-    logger.info(f"CONTROLLER: ===== USER RESPONSE SUBMISSION START =====")
-    logger.info(f"CONTROLLER: Submitting response for session: {request.session_id}, question: {request.question_number}")
-    logger.info(f"CONTROLLER: AI Question: {request.ai_question}")
-    logger.info(f"CONTROLLER: User Response: {request.user_response}")
-    logger.info(f"CONTROLLER: Candidate: {request.candidate_name}, Role: {request.role_name}")
-    
-    try:
-        # Send both AI question and user response to RabbitMQ queue
-        success = rabbitmq_publisher.publish_response(
-            session_id=request.session_id,
-            ai_question=request.ai_question,
-            user_response=request.user_response,
-            question_number=request.question_number,
-            candidate_name=request.candidate_name,
-            role_name=request.role_name
-        )
-        
-        if success:
-            logger.info(f"CONTROLLER: ✅ Successfully submitted response to RabbitMQ for session: {request.session_id}")
-            logger.info(f"CONTROLLER: ===== USER RESPONSE SUBMISSION END =====")
-            
-            return UserResponseResponse(
-                success=True,
-                message="Response submitted successfully",
-                session_id=request.session_id,
-                question_number=request.question_number
-            )
-        else:
-            logger.error(f"CONTROLLER: ❌ Failed to submit response to RabbitMQ for session: {request.session_id}")
-            raise HTTPException(status_code=500, detail="Failed to submit response to message queue")
-            
-    except Exception as e:
-        logger.error(f"CONTROLLER: Exception submitting response for session {request.session_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error submitting response: {str(e)}")
