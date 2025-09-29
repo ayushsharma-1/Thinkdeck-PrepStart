@@ -11,6 +11,8 @@ class QuestionGenerationRequest(BaseModel):
     question_number: int
     previous_responses: List[Dict[str, Any]] = []
     covered_topics: List[str] = []
+    is_clarification_request: bool = False
+    original_question: Optional[str] = None
     
     @validator('session_id')
     def validate_session_id(cls, v):

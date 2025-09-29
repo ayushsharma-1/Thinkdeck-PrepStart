@@ -100,6 +100,137 @@ async def evaluate_interview(request: EvaluationRequest):
             error=str(e)
         )
 
+@router.post("/evaluate-response-confidence")
+@handle_exceptions
+async def evaluate_response_confidence(request: Dict[str, Any]):
+    """Evaluate confidence/quality of a single response"""
+    
+    question = request.get("question", "")
+    response = request.get("response", "")
+    role_name = request.get("role_name", "")
+    topic = request.get("topic", "General")
+    
+    logger.info(f"Evaluating response confidence for role: {role_name}, topic: {topic}")
+    
+    try:
+        # Create evaluation prompt for AI
+        evaluation_prompt = f"""
+        Evaluate the quality and confidence of this interview response on a scale of 0-100.
+        
+        Question: {question}
+        Response: {response}
+        Role: {role_name}
+        Topic: {topic}
+        
+        Consider these factors:
+        1. Relevance to the question (0-30 points)
+        2. Depth and detail (0-25 points)
+        3. Clarity and communication (0-20 points)
+        4. Professionalism and structure (0-15 points)
+        5. Role-specific knowledge demonstration (0-10 points)
+        
+        Provide only a numerical score (0-100) and brief reasoning.
+        If the response is too short, generic, or irrelevant, score below 60.
+        If the response shows good understanding and detail, score 60-85.
+        If the response is excellent with specific examples and insights, score 85-100.
+        """
+        
+        # Call AI service for evaluation
+        ai_response = await ai_service.get_completion(evaluation_prompt)
+        
+        if ai_response and ai_response.get('success'):
+            content = ai_response.get('content', '').strip()
+            
+            # Extract numerical score from response
+            import re
+            score_match = re.search(r'\b(\d+)\b', content)
+            confidence_score = int(score_match.group(1)) if score_match else 50
+            
+            # Ensure score is within bounds
+            confidence_score = max(0, min(100, confidence_score))
+            
+            logger.info(f"AI confidence evaluation: {confidence_score}% for response length: {len(response)}")
+            
+            return {
+                "success": True,
+                "confidence_score": confidence_score,
+                "reasoning": content,
+                "evaluation_method": "ai_based"
+            }
+        else:
+            raise Exception("AI evaluation failed")
+            
+    except Exception as e:
+        logger.warning(f"AI confidence evaluation failed: {str(e)}")
+        
+        # Fallback to rule-based evaluation
+        confidence_score = calculate_basic_confidence_score(question, response, topic, role_name)
+        
+        return {
+            "success": True,
+            "confidence_score": confidence_score,
+            "reasoning": "Fallback rule-based evaluation used",
+            "evaluation_method": "rule_based"
+        }
+
+def calculate_basic_confidence_score(question: str, response: str, topic: str, role_name: str) -> int:
+    """Fallback confidence scoring based on response characteristics"""
+    score = 50  # Base score
+    
+    # Length-based scoring
+    word_count = len(response.strip().split())
+    if word_count < 5:
+        score -= 30
+    elif word_count < 10:
+        score -= 10
+    elif word_count > 20:
+        score += 10
+    elif word_count > 50:
+        score += 20
+    
+    # Content quality indicators
+    lower_response = response.lower()
+    
+    # Positive indicators
+    if 'experience' in lower_response:
+        score += 10
+    if 'project' in lower_response:
+        score += 10
+    if 'skill' in lower_response:
+        score += 10
+    if 'learn' in lower_response:
+        score += 5
+    if 'challenge' in lower_response:
+        score += 5
+    
+    # Topic-specific scoring
+    if topic.lower() == 'general':
+        if 'myself' in lower_response or 'background' in lower_response:
+            score += 15
+        if 'interested' in lower_response or 'passion' in lower_response:
+            score += 10
+    
+    # Role-specific keywords for AI/ML
+    if 'ai' in role_name.lower() or 'ml' in role_name.lower():
+        if any(keyword in lower_response for keyword in ['machine learning', 'ai', 'data', 'algorithm', 'model']):
+            score += 15
+    
+    # Negative indicators
+    if len(response) < 20:
+        score -= 20
+    if response == response.lower():  # No capitalization
+        score -= 5
+    if not any(punct in response for punct in '.!?'):
+        score -= 5
+    
+    # Generic responses
+    generic_phrases = ['i like', 'it is good', 'yes', 'no', 'ok', 'fine']
+    if any(phrase in lower_response for phrase in generic_phrases) and word_count < 10:
+        score -= 25
+    
+    # Ensure score is within bounds
+    return max(0, min(100, score))
+
 @router.delete("/cleanup-session/{session_id}")
 @handle_exceptions
 async def cleanup_session_data(session_id: str):

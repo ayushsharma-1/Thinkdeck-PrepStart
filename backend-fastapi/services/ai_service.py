@@ -65,7 +65,9 @@ class AIService:
         role_name: str,
         question_number: int,
         previous_responses: Optional[List[Dict]] = None,
-        covered_topics: Optional[List[str]] = None
+        covered_topics: Optional[List[str]] = None,
+        is_clarification_request: bool = False,
+        original_question: Optional[str] = None
     ) -> Dict[str, Any]:
         """Generate question using available AI provider"""
         
@@ -100,7 +102,8 @@ class AIService:
                 logger.info("AI_SERVICE: Attempting Groq generation...")
                 result = await self._generate_question_groq(
                     resume_text, job_description, role_name, 
-                    question_number, previous_responses, covered_topics
+                    question_number, previous_responses, covered_topics,
+                    is_clarification_request, original_question
                 )
                 logger.info(f"AI_SERVICE: Groq generation successful for question #{question_number}")
                 logger.info(f"AI_SERVICE: Generated question: {result.get('question', '')[:100]}...")
@@ -116,7 +119,8 @@ class AIService:
                 logger.info("AI_SERVICE: Attempting Google AI generation...")
                 result = await self._generate_question_google(
                     resume_text, job_description, role_name, 
-                    question_number, previous_responses, covered_topics
+                    question_number, previous_responses, covered_topics,
+                    is_clarification_request, original_question
                 )
                 logger.info(f"AI_SERVICE: Google AI generation successful for question #{question_number}")
                 logger.info(f"AI_SERVICE: Generated question: {result.get('question', '')[:100]}...")
@@ -140,7 +144,9 @@ class AIService:
         role_name: str,
         question_number: int,
         previous_responses: Optional[List[Dict]] = None,
-        covered_topics: Optional[List[str]] = None
+        covered_topics: Optional[List[str]] = None,
+        is_clarification_request: bool = False,
+        original_question: Optional[str] = None
     ) -> Dict[str, Any]:
         """Generate question using Groq API"""
         
