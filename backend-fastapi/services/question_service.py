@@ -1,6 +1,8 @@
 import random
 from typing import Dict, List, Any, Optional
 from services.ai_service import AIService
+from services.redis_service import RedisService
+from services.rabbitmq_service import RabbitMQService
 from utils.logger import setup_logger
 from utils.error_handler import handle_exceptions, AIServiceError
 
@@ -11,6 +13,8 @@ class QuestionService:
     
     def __init__(self):
         self.ai_service = AIService()
+        self.redis_service = RedisService()
+        self.rabbitmq_service = RabbitMQService()
         self.fallback_questions = self._load_fallback_questions()
         self.role_topics = self._load_role_topics()
         
@@ -44,6 +48,37 @@ class QuestionService:
             )
             
             logger.info(f"Question generated using AI service for session {session_id}")
+            
+            # Store the AI-generated question in Redis
+            question_storage_data = {
+                "session_id": session_id,
+                "question_number": question_number,
+                "question_text": question_data.get("question", ""),
+                "topic": question_data.get("topic", "General"),
+                "difficulty": question_data.get("difficulty", "medium"),
+                "is_ai_generated": True,
+                "generated_at": __import__('datetime').datetime.now().isoformat(),
+                "role_name": role_name
+            }
+            
+            # Store question in Redis
+            try:
+                await self.redis_service.store_question(session_id, question_storage_data)
+                logger.info(f"AI-generated question stored in Redis for session {session_id}")
+            except Exception as redis_error:
+                logger.warning(f"Failed to store question in Redis: {str(redis_error)}")
+            
+            # Publish question to unified RabbitMQ queue for processing
+            try:
+                await self.rabbitmq_service.publish_interview_data(
+                    session_id=session_id,
+                    data_type="question",
+                    data_content=question_storage_data
+                )
+                logger.info(f"AI-generated question published to unified queue for session {session_id}")
+            except Exception as rabbitmq_error:
+                logger.warning(f"Failed to publish question to unified queue: {str(rabbitmq_error)}")
+            
             return self._format_question_response(question_data, question_number)
             
         except Exception as ai_error:
@@ -52,6 +87,39 @@ class QuestionService:
             # Use predefined fallback questions
             fallback_question = await self.get_fallback_question(role_name, question_number)
             logger.info(f"Using predefined fallback question for session {session_id}")
+            
+            # Store the fallback question in Redis too
+            fallback_storage_data = {
+                "session_id": session_id,
+                "question_number": question_number,
+                "question_text": fallback_question,
+                "topic": self._get_topic_for_question_number(role_name, question_number),
+                "difficulty": "medium",
+                "is_ai_generated": False,
+                "fallback_used": True,
+                "generated_at": __import__('datetime').datetime.now().isoformat(),
+                "role_name": role_name,
+                "error": f"AI service failed: {str(ai_error)}"
+            }
+            
+            # Store fallback question in Redis
+            try:
+                await self.redis_service.store_question(session_id, fallback_storage_data)
+                logger.info(f"Fallback question stored in Redis for session {session_id}")
+            except Exception as redis_error:
+                logger.warning(f"Failed to store fallback question in Redis: {str(redis_error)}")
+            
+            # Publish fallback question to unified RabbitMQ queue for processing
+            try:
+                await self.rabbitmq_service.publish_interview_data(
+                    session_id=session_id,
+                    data_type="question",
+                    data_content=fallback_storage_data
+                )
+                logger.info(f"Fallback question published to unified queue for session {session_id}")
+            except Exception as rabbitmq_error:
+                logger.warning(f"Failed to publish fallback question to unified queue: {str(rabbitmq_error)}")
+            
             return {
                 "success": True,
                 "question": fallback_question,

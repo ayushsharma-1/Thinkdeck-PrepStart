@@ -2,7 +2,7 @@
 
 A comprehensive backend architecture for an AI-powered interview platform built with Node.js (Express), FastAPI (Python), and centralized logging, featuring real-time communication, AI question generation, speech-to-text processing, and robust cloud integrations.
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ### **Logging Backend** (Port 5002)
 - **Express.js** centralized logging service
@@ -26,7 +26,7 @@ A comprehensive backend architecture for an AI-powered interview platform built 
 - **Resume parsing** (PDF, DOCX) with PyPDF2 and python-docx
 - **RabbitMQ consumers** for async processing
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - **Node.js 16+** and npm
@@ -59,7 +59,7 @@ This starts:
 - Node.js backend (port 5000)
 - Frontend client (port 3000, if available)
 
-## 📡 API Endpoints
+## API Endpoints
 
 ### Node.js Backend APIs
 
@@ -142,7 +142,7 @@ Content-Type: application/json
 - Node.js: `GET http://localhost:5000/health`
 - FastAPI: `GET http://localhost:8000/health`
 
-## 🔄 Data Flow
+## Data Flow
 
 ### Interview Session Creation
 1. **Frontend** → Node.js `/api/setup-interview`
@@ -167,7 +167,7 @@ Content-Type: application/json
 3. **Node.js** updates chat in Redis
 4. **Socket.IO** broadcasts confirmation
 
-## 🗄️ Database Schemas
+## Database Schemas
 
 ### MongoDB Session Schema
 ```javascript
@@ -215,7 +215,7 @@ Content-Type: application/json
 }]
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -273,7 +273,7 @@ docker-compose -f docker-compose.dev.yml up -d
 docker-compose up -d --scale backend-server=3 --scale backend-fastapi=2
 ```
 
-## 📊 Service Management
+## Service Management
 
 ### View Service Status
 ```bash
@@ -300,7 +300,7 @@ docker-compose down
 docker-compose restart backend-server
 ```
 
-## 🔍 Debugging & Troubleshooting
+## Debugging & Troubleshooting
 
 ### Common Issues
 
@@ -335,7 +335,7 @@ Set `NODE_ENV=development` and `PYTHON_ENV=development` for:
 - **FastAPI**: `backend-fastapi/logs/`
 - **Docker**: `docker-compose logs`
 
-## 🧪 Testing
+## Testing
 
 ### Unit Tests
 ```bash
