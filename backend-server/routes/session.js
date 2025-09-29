@@ -6,6 +6,7 @@ const { getRedisClient } = require('../config/redis');
 const logger = require('../utils/logger');
 const { AppError } = require('../utils/errorHandler');
 const { processResumeFile } = require('../utils/resumeProcessor');
+const { validateGenerateNextQuestion } = require('../utils/validation');
 
 const router = express.Router();
 
@@ -342,7 +343,7 @@ router.post('/get-session', async (req, res, next) => {
 });
 
 // Generate next question
-router.post('/generate-next-question', async (req, res, next) => {
+router.post('/generate-next-question', validateGenerateNextQuestion, async (req, res, next) => {
   const requestStartTime = Date.now();
   const requestId = `req_${requestStartTime}_${Math.random().toString(36).substr(2, 9)}`;
   console.log(`[BACKEND] ${requestId} - /generate-next-question endpoint called at ${requestStartTime}`);
@@ -385,19 +386,41 @@ router.post('/generate-next-question', async (req, res, next) => {
       console.log(`[BACKEND] ${requestId} - Saving response for question ${session.currentQuestionNumber}`);
       session.responses.push(responseData);
       
-      // Store response in Redis for scoring
+      // Store complete question-response pair in Redis
       try {
         const redisClient = getRedisClient();
         if (redisClient) {
-          const redisKey = `interview:${sessionId}:responses`;
-          await redisClient.rPush(redisKey, JSON.stringify(responseData));
+          // Find the current question details
+          const currentQuestion = session.questions.find(q => q.questionNumber === session.currentQuestionNumber);
+          
+          // Create complete question-response pair
+          const completeData = {
+            session_id: sessionId,
+            question_number: session.currentQuestionNumber,
+            question_text: currentQuestion ? currentQuestion.question : 'Question not found',
+            topic: currentQuestion ? currentQuestion.topic : 'General',
+            difficulty: currentQuestion ? currentQuestion.difficulty : 'medium',
+            is_ai_generated: currentQuestion ? currentQuestion.isAiGenerated : false,
+            generated_at: currentQuestion ? currentQuestion.createdAt || new Date().toISOString() : new Date().toISOString(),
+            role_name: session.roleName,
+            user_response: responseText,
+            response_timestamp: new Date().toISOString()
+          };
+          
+          const redisKey = `interview:${sessionId}:qa_pairs`;
+          await redisClient.rPush(redisKey, JSON.stringify(completeData));
           await redisClient.expire(redisKey, parseInt(process.env.REDIS_TTL) || 3600);
-          console.log(`[BACKEND] ${requestId} - Response stored in Redis for session: ${sessionId}`);
-          logger.info(`Response stored in Redis for session: ${sessionId}`);
+          console.log(`[BACKEND] ${requestId} - Complete Q&A pair stored in Redis for session: ${sessionId}`);
+          logger.info(`Complete Q&A pair stored in Redis for session: ${sessionId}, question: ${session.currentQuestionNumber}`);
+          
+          // Also store in the old format for backward compatibility
+          const redisKeyOld = `interview:${sessionId}:responses`;
+          await redisClient.rPush(redisKeyOld, JSON.stringify(responseData));
+          await redisClient.expire(redisKeyOld, parseInt(process.env.REDIS_TTL) || 3600);
         }
       } catch (redisError) {
-        console.log(`[BACKEND] ${requestId} - Failed to store response in Redis:`, redisError.message);
-        logger.warn('Failed to store response in Redis:', redisError.message);
+        console.log(`[BACKEND] ${requestId} - Failed to store Q&A pair in Redis:`, redisError.message);
+        logger.warn('Failed to store Q&A pair in Redis:', redisError.message);
       }
     }
     

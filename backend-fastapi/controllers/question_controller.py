@@ -6,6 +6,8 @@ from models.schemas import (
 )
 from services.ai_service import AIService
 from services.question_service import QuestionService
+from services.redis_service import RedisService
+from services.rabbitmq_service import RabbitMQService
 from utils.logger import setup_logger
 from utils.error_handler import handle_exceptions, async_retry_with_timeout
 
@@ -15,6 +17,8 @@ logger = setup_logger(__name__)
 # Initialize services
 ai_service = AIService()
 question_service = QuestionService()
+redis_service = RedisService()
+rabbitmq_service = RabbitMQService()
 
 @router.get("/debug-ai-status")
 async def debug_ai_status():
@@ -193,4 +197,136 @@ async def get_question_topics(role_name: str):
         
     except Exception as e:
         logger.error(f"Failed to get topics for role {role_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/store-response")
+@handle_exceptions
+async def store_response(request: dict):
+    """Store user response in Redis"""
+    
+    session_id = request.get("session_id")
+    response_text = request.get("response_text")
+    question_number = request.get("question_number")
+    
+    logger.info(f"Storing user response for session: {session_id}, question: {question_number}")
+    
+    if not all([session_id, response_text, question_number]):
+        raise HTTPException(status_code=400, detail="Missing required fields: session_id, response_text, question_number")
+    
+    try:
+        # Prepare response data for storage
+        response_data = {
+            "session_id": session_id,
+            "question_number": question_number,
+            "response_text": response_text,
+            "timestamp": __import__('datetime').datetime.now().isoformat(),
+            "response_length": len(response_text),
+            "submitted_at": request.get("timestamp", __import__('datetime').datetime.now().isoformat())
+        }
+        
+        # Store response in Redis
+        success = await redis_service.store_response(session_id, response_data)
+        
+        if success:
+            logger.info(f"Successfully stored user response for session: {session_id}")
+            
+            # Publish response to unified RabbitMQ queue for processing
+            try:
+                await rabbitmq_service.publish_interview_data(
+                    session_id=session_id,
+                    data_type="response",
+                    data_content=response_data
+                )
+                logger.info(f"User response published to unified queue for session: {session_id}")
+            except Exception as rabbitmq_error:
+                logger.warning(f"Failed to publish response to unified queue: {str(rabbitmq_error)}")
+            
+            return {
+                "success": True,
+                "message": "Response stored successfully",
+                "session_id": session_id,
+                "question_number": question_number
+            }
+        else:
+            logger.error(f"Failed to store response for session: {session_id}")
+            raise HTTPException(status_code=500, detail="Failed to store response in Redis")
+            
+    except Exception as e:
+        logger.error(f"❌ Error storing response for session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/interview-data/{session_id}")
+@handle_exceptions
+async def get_interview_data(session_id: str):
+    """Get complete interview data (questions, responses, and pairs) for a session"""
+    
+    logger.info(f"📋 Retrieving complete interview data for session: {session_id}")
+    
+    try:
+        # Get complete interview data from Redis
+        interview_data = await redis_service.get_complete_interview_data(session_id)
+        
+        logger.info(f"✅ Retrieved interview data - Questions: {interview_data['question_count']}, Responses: {interview_data['response_count']}, Pairs: {interview_data['pair_count']}")
+        
+        return {
+            "success": True,
+            "data": interview_data
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving interview data for session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/interview-pairs/{session_id}")
+@handle_exceptions
+async def get_interview_pairs(session_id: str):
+    """Get all question-response pairs for a session"""
+    
+    logger.info(f"🔗 Retrieving Q&A pairs for session: {session_id}")
+    
+    try:
+        # Get pairs from Redis
+        pairs = await redis_service.get_all_pairs(session_id)
+        
+        logger.info(f"✅ Retrieved {len(pairs)} Q&A pairs for session: {session_id}")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "pair_count": len(pairs),
+            "pairs": pairs
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving pairs for session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/processor-status/{session_id}")
+@handle_exceptions
+async def get_processor_status(session_id: str):
+    """Get processing status for a session from the interview processor"""
+    
+    logger.info(f"📊 Retrieving processor status for session: {session_id}")
+    
+    try:
+        # Access the global interview processor
+        from main import interview_processor
+        
+        if interview_processor:
+            summary = await interview_processor.get_session_summary(session_id)
+            
+            logger.info(f"✅ Retrieved processor status for session: {session_id}")
+            
+            return {
+                "success": True,
+                "processor_summary": summary
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Interview processor not available"
+            }
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving processor status for session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

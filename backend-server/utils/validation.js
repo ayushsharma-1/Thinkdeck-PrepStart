@@ -27,7 +27,18 @@ const generateQuestionSchema = Joi.object({
 const submitResponseSchema = Joi.object({
   sessionId: Joi.string().pattern(/^session_\d+_[a-z0-9]+$/).required(),
   questionNumber: Joi.number().integer().min(1).max(20).required(),
-  response: Joi.string().min(10).max(2000).required()
+  response: Joi.string().min(10).max(2000).required(),
+  responseText: Joi.string().min(10).max(2000).optional(), // Backward compatibility
+  question_text: Joi.string().min(1).max(5000).optional(),
+  timestamp: Joi.string().isoDate().optional()
+});
+
+// Generate next question validation schema (for session.js route)
+const generateNextQuestionSchema = Joi.object({
+  sessionId: Joi.string().pattern(/^session_\d+_[a-z0-9]+$/).required(),
+  responseText: Joi.string().min(10).max(2000).optional(),
+  questionNumber: Joi.number().integer().min(1).max(20).optional(),
+  timestamp: Joi.string().isoDate().optional()
 });
 
 // Validation middleware functions
@@ -92,6 +103,17 @@ const validateResponse = (req, res, next) => {
   
   if (suspiciousPatterns.some(pattern => pattern.test(response))) {
     return next(new AppError('Response contains invalid content', 400));
+  }
+  
+  next();
+};
+
+const validateGenerateNextQuestion = (req, res, next) => {
+  const { error } = generateNextQuestionSchema.validate(req.body);
+  
+  if (error) {
+    const errorMessage = error.details[0].message;
+    return next(new AppError(`Validation error: ${errorMessage}`, 400));
   }
   
   next();
@@ -168,6 +190,7 @@ const customValidationRules = {
 module.exports = {
   validateInterviewSetup,
   validateGenerateQuestion,
+  validateGenerateNextQuestion,
   validateResponse,
   validateSessionId,
   validate,
@@ -177,6 +200,7 @@ module.exports = {
   schemas: {
     interviewSetupSchema,
     generateQuestionSchema,
+    generateNextQuestionSchema,
     submitResponseSchema
   }
 };

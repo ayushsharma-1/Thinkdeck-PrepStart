@@ -12,6 +12,8 @@ from controllers.speech_controller import router as speech_router
 from controllers.evaluation_controller import router as evaluation_router
 from controllers.resume_controller import router as resume_router
 from services.rabbitmq_service import RabbitMQService
+from services.redis_service import RedisService
+from services.interview_processor import InterviewProcessor
 from utils.logger import setup_logger
 import time
 
@@ -21,27 +23,52 @@ load_dotenv()
 # Setup logger
 logger = setup_logger(__name__)
 
-# RabbitMQ service instance
+# Service instances
 rabbitmq_service = None
+redis_service = None
+interview_processor = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global rabbitmq_service
+    global rabbitmq_service, redis_service, interview_processor
     try:
+        # Initialize Redis service
+        logger.info("Initializing Redis service...")
+        redis_service = RedisService()
+        await redis_service.connect()
+        logger.info("Redis service initialized")
+        
+        # Initialize RabbitMQ service
+        logger.info("Initializing RabbitMQ service...")
         rabbitmq_service = RabbitMQService()
         await rabbitmq_service.connect()
         await rabbitmq_service.setup_consumers()
+        logger.info("RabbitMQ service initialized")
+        
+        # Initialize Interview Processor
+        logger.info("Initializing Interview Processor...")
+        interview_processor = InterviewProcessor()
+        await interview_processor.start_processing()
+        logger.info("Interview Processor initialized")
+        
         logger.info("FastAPI server startup completed")
         yield
     except Exception as e:
-        logger.error(f"Failed to start FastAPI server: {e}")
+        logger.error(f"❌ Failed to start FastAPI server: {e}")
         raise
     finally:
         # Shutdown
+        if redis_service:
+            logger.info("🔒 Closing Redis connection...")
+            await redis_service.close()
         if rabbitmq_service:
+            logger.info("🔒 Closing RabbitMQ connection...")
             await rabbitmq_service.close()
-        logger.info("FastAPI server shutdown completed")
+        if interview_processor:
+            logger.info("🔒 Shutting down Interview Processor...")
+            # Add cleanup if needed
+        logger.info("✅ FastAPI server shutdown completed")
 
 # Create FastAPI app
 app = FastAPI(
