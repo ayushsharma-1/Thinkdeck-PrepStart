@@ -3,12 +3,11 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from models.schemas import (
     QuestionGenerationRequest, 
     QuestionGenerationResponse,
-    UserResponseRequest,
-    UserResponseResponse,
 )
 from services.ai_service import AIService
 from services.question_service import QuestionService
-from services.rabbitmq_service import rabbitmq_publisher
+from services.redis_service import RedisService
+from services.rabbitmq_service import RabbitMQService
 from utils.logger import setup_logger
 from utils.error_handler import handle_exceptions, async_retry_with_timeout
 
@@ -18,6 +17,8 @@ logger = setup_logger(__name__)
 # Initialize services
 ai_service = AIService()
 question_service = QuestionService()
+redis_service = RedisService()
+rabbitmq_service = RabbitMQService()
 
 @router.get("/debug-ai-status")
 async def debug_ai_status():
@@ -106,18 +107,6 @@ async def generate_question(request: QuestionGenerationRequest):
             covered_topics=request.covered_topics
         )
         
-        # Send AI question to RabbitMQ queue for backend server processing
-        ai_question = question_response.get("question") if isinstance(question_response, dict) else getattr(question_response, "question", None)
-        user_response = request.previous_responses[-1] if request.previous_responses else None
-        
-        rabbitmq_publisher.publish_response(
-            session_id=request.session_id,
-            ai_question=ai_question,
-            user_response=user_response,
-            question_number=request.question_number,
-            candidate_name=getattr(request, 'candidate_name', ''),
-            role_name=request.role_name
-        )
         logger.info(f"CONTROLLER: Question generated successfully for session: {request.session_id}")
         logger.info(f"CONTROLLER: Response: {question_response}")
         logger.info(f"CONTROLLER: ===== QUESTION GENERATION REQUEST DEBUG END =====")
@@ -130,17 +119,7 @@ async def generate_question(request: QuestionGenerationRequest):
             request.role_name, 
             request.question_number
         )
-        # Send fallback question to RabbitMQ queue for backend server processing
-        user_response = request.previous_responses[-1] if request.previous_responses else None
         
-        rabbitmq_publisher.publish_response(
-            session_id=request.session_id,
-            ai_question=fallback_question,
-            user_response=user_response,
-            question_number=request.question_number,
-            candidate_name=getattr(request, 'candidate_name', ''),
-            role_name=request.role_name
-        )
         return QuestionGenerationResponse(
             success=True,
             question=fallback_question,
@@ -220,42 +199,134 @@ async def get_question_topics(role_name: str):
         logger.error(f"Failed to get topics for role {role_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/submit-response", response_model=UserResponseResponse)
+@router.post("/store-response")
 @handle_exceptions
-async def submit_user_response(request: UserResponseRequest):
-    """Submit user response and send to RabbitMQ queue for processing"""
+async def store_response(request: dict):
+    """Store user response in Redis"""
     
-    logger.info(f"CONTROLLER: ===== USER RESPONSE SUBMISSION START =====")
-    logger.info(f"CONTROLLER: Submitting response for session: {request.session_id}, question: {request.question_number}")
-    logger.info(f"CONTROLLER: AI Question: {request.ai_question}")
-    logger.info(f"CONTROLLER: User Response: {request.user_response}")
-    logger.info(f"CONTROLLER: Candidate: {request.candidate_name}, Role: {request.role_name}")
+    session_id = request.get("session_id")
+    response_text = request.get("response_text")
+    question_number = request.get("question_number")
+    
+    logger.info(f"Storing user response for session: {session_id}, question: {question_number}")
+    
+    if not all([session_id, response_text, question_number]):
+        raise HTTPException(status_code=400, detail="Missing required fields: session_id, response_text, question_number")
     
     try:
-        # Send both AI question and user response to RabbitMQ queue
-        success = rabbitmq_publisher.publish_response(
-            session_id=request.session_id,
-            ai_question=request.ai_question,
-            user_response=request.user_response,
-            question_number=request.question_number,
-            candidate_name=request.candidate_name,
-            role_name=request.role_name
-        )
+        # Prepare response data for storage
+        response_data = {
+            "session_id": session_id,
+            "question_number": question_number,
+            "response_text": response_text,
+            "timestamp": __import__('datetime').datetime.now().isoformat(),
+            "response_length": len(response_text),
+            "submitted_at": request.get("timestamp", __import__('datetime').datetime.now().isoformat())
+        }
+        
+        # Store response in Redis
+        success = await redis_service.store_response(session_id, response_data)
         
         if success:
-            logger.info(f"CONTROLLER: ✅ Successfully submitted response to RabbitMQ for session: {request.session_id}")
-            logger.info(f"CONTROLLER: ===== USER RESPONSE SUBMISSION END =====")
+            logger.info(f"Successfully stored user response for session: {session_id}")
             
-            return UserResponseResponse(
-                success=True,
-                message="Response submitted successfully",
-                session_id=request.session_id,
-                question_number=request.question_number
-            )
+            # Publish response to unified RabbitMQ queue for processing
+            try:
+                await rabbitmq_service.publish_interview_data(
+                    session_id=session_id,
+                    data_type="response",
+                    data_content=response_data
+                )
+                logger.info(f"User response published to unified queue for session: {session_id}")
+            except Exception as rabbitmq_error:
+                logger.warning(f"Failed to publish response to unified queue: {str(rabbitmq_error)}")
+            
+            return {
+                "success": True,
+                "message": "Response stored successfully",
+                "session_id": session_id,
+                "question_number": question_number
+            }
         else:
-            logger.error(f"CONTROLLER: ❌ Failed to submit response to RabbitMQ for session: {request.session_id}")
-            raise HTTPException(status_code=500, detail="Failed to submit response to message queue")
+            logger.error(f"Failed to store response for session: {session_id}")
+            raise HTTPException(status_code=500, detail="Failed to store response in Redis")
             
     except Exception as e:
-        logger.error(f"CONTROLLER: Exception submitting response for session {request.session_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error submitting response: {str(e)}")
+        logger.error(f"❌ Error storing response for session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/interview-data/{session_id}")
+@handle_exceptions
+async def get_interview_data(session_id: str):
+    """Get complete interview data (questions, responses, and pairs) for a session"""
+    
+    logger.info(f"📋 Retrieving complete interview data for session: {session_id}")
+    
+    try:
+        # Get complete interview data from Redis
+        interview_data = await redis_service.get_complete_interview_data(session_id)
+        
+        logger.info(f"✅ Retrieved interview data - Questions: {interview_data['question_count']}, Responses: {interview_data['response_count']}, Pairs: {interview_data['pair_count']}")
+        
+        return {
+            "success": True,
+            "data": interview_data
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving interview data for session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/interview-pairs/{session_id}")
+@handle_exceptions
+async def get_interview_pairs(session_id: str):
+    """Get all question-response pairs for a session"""
+    
+    logger.info(f"🔗 Retrieving Q&A pairs for session: {session_id}")
+    
+    try:
+        # Get pairs from Redis
+        pairs = await redis_service.get_all_pairs(session_id)
+        
+        logger.info(f"✅ Retrieved {len(pairs)} Q&A pairs for session: {session_id}")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "pair_count": len(pairs),
+            "pairs": pairs
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving pairs for session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/processor-status/{session_id}")
+@handle_exceptions
+async def get_processor_status(session_id: str):
+    """Get processing status for a session from the interview processor"""
+    
+    logger.info(f"📊 Retrieving processor status for session: {session_id}")
+    
+    try:
+        # Access the global interview processor
+        from main import interview_processor
+        
+        if interview_processor:
+            summary = await interview_processor.get_session_summary(session_id)
+            
+            logger.info(f"✅ Retrieved processor status for session: {session_id}")
+            
+            return {
+                "success": True,
+                "processor_summary": summary
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Interview processor not available"
+            }
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving processor status for session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
