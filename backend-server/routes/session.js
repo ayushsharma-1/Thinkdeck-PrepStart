@@ -412,11 +412,6 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
           await redisClient.expire(redisKey, parseInt(process.env.REDIS_TTL) || 3600);
           console.log(`[BACKEND] ${requestId} - Complete Q&A pair stored in Redis for session: ${sessionId}`);
           logger.info(`Complete Q&A pair stored in Redis for session: ${sessionId}, question: ${session.currentQuestionNumber}`);
-          
-          // Also store in the old format for backward compatibility
-          const redisKeyOld = `interview:${sessionId}:responses`;
-          await redisClient.rPush(redisKeyOld, JSON.stringify(responseData));
-          await redisClient.expire(redisKeyOld, parseInt(process.env.REDIS_TTL) || 3600);
         }
       } catch (redisError) {
         console.log(`[BACKEND] ${requestId} - Failed to store Q&A pair in Redis:`, redisError.message);

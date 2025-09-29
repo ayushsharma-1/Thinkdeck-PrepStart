@@ -67,10 +67,9 @@ class InterviewProcessor:
         logger.info(f"Processing question {question_number} for session: {session_id}")
         
         try:
-            # Store question immediately in Redis
-            success = await self.redis_service.store_question(session_id, question_data)
-            if success:
-                logger.info(f"Question {question_number} stored in Redis")
+            # Skip individual question storage - using complete Q&A pairs instead
+            # success = await self.redis_service.store_question(session_id, question_data)
+            logger.info(f"Question {question_number} processed (complete Q&A pair will be stored by Node.js backend)")
             
             # Add to session tracking
             session["questions"].append(question_data)
@@ -87,10 +86,9 @@ class InterviewProcessor:
         logger.info(f"Processing response to question {question_number} for session: {session_id}")
         
         try:
-            # Store response immediately in Redis
-            success = await self.redis_service.store_response(session_id, response_data)
-            if success:
-                logger.info(f"Response to question {question_number} stored in Redis")
+            # Skip individual response storage - using complete Q&A pairs instead
+            # success = await self.redis_service.store_response(session_id, response_data)
+            logger.info(f"Response to question {question_number} processed (complete Q&A pair will be stored by Node.js backend)")
             
             # Add to session tracking
             session["responses"].append(response_data)
