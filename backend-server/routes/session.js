@@ -10,7 +10,7 @@ const { validateGenerateNextQuestion } = require('../utils/validation');
 
 const router = express.Router();
 
-// Confidence evaluation function
+// Confidence evaluation function with partial answer detection
 async function evaluateResponseConfidence(question, response, roleName, topic) {
   try {
     // Call FastAPI backend for AI-based confidence evaluation
@@ -21,20 +21,38 @@ async function evaluateResponseConfidence(question, response, roleName, topic) {
       topic: topic
     };
     
-    console.log(`[CONFIDENCE] Evaluating response confidence...`);
+    console.log(`[CONFIDENCE] Evaluating response confidence with partial answer detection...`);
     const aiResponse = await axios.post('http://localhost:8000/api/evaluate-response-confidence', evaluationPayload, { 
       timeout: 10000 
     });
     
     if (aiResponse.data.success && aiResponse.data.confidence_score !== undefined) {
-      return Math.round(aiResponse.data.confidence_score);
+      // Return full evaluation result for partial answer handling
+      return {
+        confidence_score: Math.round(aiResponse.data.confidence_score),
+        is_multipart: aiResponse.data.is_multipart || false,
+        parts_identified: aiResponse.data.parts_identified || [],
+        answered_parts: aiResponse.data.answered_parts || [],
+        missing_parts: aiResponse.data.missing_parts || [],
+        reasoning: aiResponse.data.reasoning || '',
+        evaluation_method: aiResponse.data.evaluation_method || 'ai_based'
+      };
     }
   } catch (aiError) {
     console.log(`[CONFIDENCE] AI evaluation failed, using fallback:`, aiError.message);
   }
   
   // Fallback confidence scoring based on response characteristics
-  return calculateBasicConfidenceScore(question, response, topic);
+  const fallbackScore = calculateBasicConfidenceScore(question, response, topic);
+  return {
+    confidence_score: fallbackScore,
+    is_multipart: false,
+    parts_identified: [],
+    answered_parts: [],
+    missing_parts: [],
+    reasoning: 'Fallback rule-based evaluation used',
+    evaluation_method: 'rule_based'
+  };
 }
 
 function calculateBasicConfidenceScore(question, response, topic) {
@@ -481,20 +499,31 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
           console.log(`[BACKEND] ${requestId} - Complete Q&A pair stored in Redis for session: ${sessionId}`);
           logger.info(`Complete Q&A pair stored in Redis for session: ${sessionId}, question: ${session.currentQuestionNumber}`);
           
-          // Evaluate response confidence/quality
-          const confidenceScore = await evaluateResponseConfidence(
+          // Evaluate response confidence/quality with partial answer detection
+          const evaluationResult = await evaluateResponseConfidence(
             currentQuestion ? currentQuestion.question : 'Unknown question',
             responseText,
             session.roleName,
             currentQuestion ? currentQuestion.topic : 'General'
           );
           
+          const confidenceScore = typeof evaluationResult === 'number' ? evaluationResult : evaluationResult.confidence_score || 0;
+          
           console.log(`[BACKEND] ${requestId} - Response confidence score: ${confidenceScore}% for session: ${sessionId}`);
           logger.info(`Response confidence score: ${confidenceScore}% for session: ${sessionId}, question: ${session.currentQuestionNumber}`);
           
-          // Update the stored data with confidence score
+          // Update the stored data with confidence score and partial answer info
           completeData.confidence_score = confidenceScore;
           completeData.needs_clarification = confidenceScore < 60; // Threshold for re-asking
+          
+          // Add partial answer detection data if available
+          if (typeof evaluationResult === 'object' && evaluationResult) {
+            completeData.is_multipart = evaluationResult.is_multipart || false;
+            completeData.parts_identified = evaluationResult.parts_identified || [];
+            completeData.answered_parts = evaluationResult.answered_parts || [];
+            completeData.missing_parts = evaluationResult.missing_parts || [];
+            completeData.evaluation_reasoning = evaluationResult.reasoning || '';
+          }
           
           // Re-store with confidence data
           await redisClient.lPop(redisKey); // Remove the last stored item
@@ -506,12 +535,13 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
       }
     }
     
-    // Check confidence score to decide next action
+    // Check confidence score and partial answer status to decide next action
     let shouldRepeatQuestion = false;
     let nextQuestionNumber = session.currentQuestionNumber + 1;
+    let partialAnswerData = null;
     
     if (responseText) {
-      // Get the confidence score from the stored data
+      // Get the confidence score and partial answer data from the stored data
       const redisClient = getRedisClient();
       try {
         const redisKey = `interview:${sessionId}:qa_pairs`;
@@ -523,8 +553,18 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
           if (confidenceScore < 60) { // Low confidence threshold
             shouldRepeatQuestion = true;
             nextQuestionNumber = session.currentQuestionNumber; // Same question number
-            console.log(`[BACKEND] ${requestId} - Low confidence score (${confidenceScore}%), will re-ask question ${nextQuestionNumber} with clarification`);
-            logger.info(`Low confidence response for session: ${sessionId}, question: ${session.currentQuestionNumber}, score: ${confidenceScore}%`);
+            
+            // Store partial answer data for targeted clarification
+            partialAnswerData = {
+              is_multipart: parsedData.is_multipart || false,
+              parts_identified: parsedData.parts_identified || [],
+              answered_parts: parsedData.answered_parts || [],
+              missing_parts: parsedData.missing_parts || [],
+              original_response: responseText
+            };
+            
+            console.log(`[BACKEND] ${requestId} - Low confidence score (${confidenceScore}%), will re-ask question ${nextQuestionNumber} with ${partialAnswerData.is_multipart ? 'targeted partial' : 'general'} clarification`);
+            logger.info(`Low confidence response for session: ${sessionId}, question: ${session.currentQuestionNumber}, score: ${confidenceScore}%, multipart: ${partialAnswerData.is_multipart}`);
           } else {
             console.log(`[BACKEND] ${requestId} - Good confidence score (${confidenceScore}%), proceeding to next question`);
           }
@@ -603,7 +643,8 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
         previous_responses: sortedResponses,
         covered_topics: session.questions.map(q => q.topic).filter(Boolean),
         is_clarification_request: shouldRepeatQuestion,
-        original_question: shouldRepeatQuestion ? (session.questions.find(q => q.questionNumber === nextQuestionNumber)?.question || '') : null
+        original_question: shouldRepeatQuestion ? (session.questions.find(q => q.questionNumber === nextQuestionNumber)?.question || '') : null,
+        partial_answer_data: partialAnswerData // Include partial answer information
       };
       
       console.log(`[BACKEND] ${requestId} - Sending request to FastAPI AI service`);
@@ -649,11 +690,17 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
           difficulty: 'medium'
         });
       } else {
-        // For repeat questions, use a generic clarification
+        // For repeat questions, use targeted clarification for partial answers
         const existingQuestionIndex = session.questions.findIndex(q => q.questionNumber === nextQuestionNumber);
         if (existingQuestionIndex !== -1) {
           const originalQuestion = session.questions[existingQuestionIndex].question;
-          nextQuestion = `${originalQuestion}\n\nLet me clarify: Please provide more details about your experience and background. I'm looking for specific examples and more comprehensive information about your skills and interests.`;
+          if (partialAnswerData && partialAnswerData.is_multipart && partialAnswerData.missing_parts.length > 0) {
+            // Build a targeted follow-up for missing parts
+            const missingPartsText = partialAnswerData.missing_parts.map((part, idx) => `Part ${idx + 1}: ${part}`).join('\n');
+            nextQuestion = `Let's focus on the parts you missed:\n${missingPartsText}\nPlease answer these specifically.`;
+          } else {
+            nextQuestion = `${originalQuestion}\n\nLet me clarify: Please provide more details about your experience and background. I'm looking for specific examples and more comprehensive information about your skills and interests.`;
+          }
           session.questions[existingQuestionIndex].question = nextQuestion;
           session.questions[existingQuestionIndex].clarification_count = (session.questions[existingQuestionIndex].clarification_count || 0) + 1;
           session.questions[existingQuestionIndex].is_clarification = true;

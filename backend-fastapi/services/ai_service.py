@@ -67,7 +67,8 @@ class AIService:
         previous_responses: Optional[List[Dict]] = None,
         covered_topics: Optional[List[str]] = None,
         is_clarification_request: bool = False,
-        original_question: Optional[str] = None
+        original_question: Optional[str] = None,
+        partial_answer_data: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Generate question using available AI provider"""
         

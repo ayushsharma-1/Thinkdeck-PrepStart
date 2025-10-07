@@ -103,7 +103,7 @@ async def evaluate_interview(request: EvaluationRequest):
 @router.post("/evaluate-response-confidence")
 @handle_exceptions
 async def evaluate_response_confidence(request: Dict[str, Any]):
-    """Evaluate confidence/quality of a single response"""
+    """Evaluate confidence/quality of a single response with partial answer detection"""
     
     question = request.get("question", "")
     response = request.get("response", "")
@@ -113,26 +113,34 @@ async def evaluate_response_confidence(request: Dict[str, Any]):
     logger.info(f"Evaluating response confidence for role: {role_name}, topic: {topic}")
     
     try:
-        # Create evaluation prompt for AI
+        # Enhanced evaluation prompt with multi-part question analysis
         evaluation_prompt = f"""
-        Evaluate the quality and confidence of this interview response on a scale of 0-100.
+        Analyze this interview response and provide a detailed evaluation.
         
         Question: {question}
         Response: {response}
         Role: {role_name}
         Topic: {topic}
         
-        Consider these factors:
-        1. Relevance to the question (0-30 points)
-        2. Depth and detail (0-25 points)
-        3. Clarity and communication (0-20 points)
-        4. Professionalism and structure (0-15 points)
-        5. Role-specific knowledge demonstration (0-10 points)
+        ANALYSIS TASKS:
+        1. Identify if this question has multiple parts (e.g., "Tell me about X and Y", "What is A and how does B work?", "Describe both C and D")
+        2. If multi-part, determine which parts were answered and which were missed
+        3. Evaluate overall response quality on a scale of 0-100
         
-        Provide only a numerical score (0-100) and brief reasoning.
-        If the response is too short, generic, or irrelevant, score below 60.
-        If the response shows good understanding and detail, score 60-85.
-        If the response is excellent with specific examples and insights, score 85-100.
+        FORMAT YOUR RESPONSE AS:
+        SCORE: [0-100]
+        IS_MULTIPART: [true/false]
+        PARTS_IDENTIFIED: [list the question parts if multipart, or "single" if not]
+        ANSWERED_PARTS: [which parts were addressed in the response]
+        MISSING_PARTS: [which parts were not addressed, or "none" if all covered]
+        REASONING: [brief explanation]
+        
+        SCORING CRITERIA:
+        - Complete answers to all parts: 60-100 based on quality
+        - Partial answers (missing significant parts): 30-59
+        - Poor/irrelevant answers: 0-29
+        
+        If the response only addresses some parts of a multi-part question, the score should be 30-59 to trigger clarification.
         """
         
         # Call AI service for evaluation
@@ -141,21 +149,24 @@ async def evaluate_response_confidence(request: Dict[str, Any]):
         if ai_response and ai_response.get('success'):
             content = ai_response.get('content', '').strip()
             
-            # Extract numerical score from response
+            # Parse the structured response
             import re
-            score_match = re.search(r'\b(\d+)\b', content)
-            confidence_score = int(score_match.group(1)) if score_match else 50
+            parsed_evaluation = parse_multipart_evaluation(content)
             
             # Ensure score is within bounds
-            confidence_score = max(0, min(100, confidence_score))
+            confidence_score = max(0, min(100, parsed_evaluation.get('score', 50)))
             
             logger.info(f"AI confidence evaluation: {confidence_score}% for response length: {len(response)}")
             
             return {
                 "success": True,
                 "confidence_score": confidence_score,
-                "reasoning": content,
-                "evaluation_method": "ai_based"
+                "reasoning": parsed_evaluation.get('reasoning', content),
+                "evaluation_method": "ai_based",
+                "is_multipart": parsed_evaluation.get('is_multipart', False),
+                "parts_identified": parsed_evaluation.get('parts_identified', []),
+                "answered_parts": parsed_evaluation.get('answered_parts', []),
+                "missing_parts": parsed_evaluation.get('missing_parts', [])
             }
         else:
             raise Exception("AI evaluation failed")
@@ -170,8 +181,67 @@ async def evaluate_response_confidence(request: Dict[str, Any]):
             "success": True,
             "confidence_score": confidence_score,
             "reasoning": "Fallback rule-based evaluation used",
-            "evaluation_method": "rule_based"
+            "evaluation_method": "rule_based",
+            "is_multipart": False,
+            "parts_identified": [],
+            "answered_parts": [],
+            "missing_parts": []
         }
+
+def parse_multipart_evaluation(content: str) -> Dict[str, Any]:
+    """Parse the structured AI evaluation response"""
+    import re
+    
+    result = {
+        'score': 50,
+        'is_multipart': False,
+        'parts_identified': [],
+        'answered_parts': [],
+        'missing_parts': [],
+        'reasoning': content
+    }
+    
+    try:
+        # Extract score
+        score_match = re.search(r'SCORE:\s*(\d+)', content, re.IGNORECASE)
+        if score_match:
+            result['score'] = int(score_match.group(1))
+        
+        # Extract multipart flag
+        multipart_match = re.search(r'IS_MULTIPART:\s*(true|false)', content, re.IGNORECASE)
+        if multipart_match:
+            result['is_multipart'] = multipart_match.group(1).lower() == 'true'
+        
+        # Extract parts identified
+        parts_match = re.search(r'PARTS_IDENTIFIED:\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+        if parts_match:
+            parts_text = parts_match.group(1).strip()
+            if parts_text and parts_text.lower() != 'single':
+                result['parts_identified'] = [p.strip().strip('"\'') for p in parts_text.split(',') if p.strip()]
+        
+        # Extract answered parts
+        answered_match = re.search(r'ANSWERED_PARTS:\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+        if answered_match:
+            answered_text = answered_match.group(1).strip()
+            if answered_text and answered_text.lower() != 'none':
+                result['answered_parts'] = [p.strip().strip('"\'') for p in answered_text.split(',') if p.strip()]
+        
+        # Extract missing parts
+        missing_match = re.search(r'MISSING_PARTS:\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+        if missing_match:
+            missing_text = missing_match.group(1).strip()
+            if missing_text and missing_text.lower() != 'none':
+                result['missing_parts'] = [p.strip().strip('"\'') for p in missing_text.split(',') if p.strip()]
+        
+        # Extract reasoning
+        reasoning_match = re.search(r'REASONING:\s*(.*?)(?=\n\S|\Z)', content, re.IGNORECASE | re.DOTALL)
+        if reasoning_match:
+            result['reasoning'] = reasoning_match.group(1).strip()
+            
+    except Exception as e:
+        logger.warning(f"Failed to parse multipart evaluation: {str(e)}")
+    
+    return result
 
 def calculate_basic_confidence_score(question: str, response: str, topic: str, role_name: str) -> int:
     """Fallback confidence scoring based on response characteristics"""
