@@ -416,7 +416,11 @@ const ResultsPage = ({ onRestart, onExit }) => {
                       <span className="text-sm font-medium text-red-800">
                         {violation.type?.replace(/_/g, ' ').toUpperCase()}
                       </span>
-                      <p className="text-xs text-red-600 mt-1">{violation.details}</p>
+                      <p className="text-xs text-red-600 mt-1">
+                        {typeof violation.details === 'string' 
+                          ? violation.details 
+                          : JSON.stringify(violation.details)}
+                      </p>
                     </div>
                     <Badge variant="destructive" className="text-xs">
                       Q{violation.questionNumber}

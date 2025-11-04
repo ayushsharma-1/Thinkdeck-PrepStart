@@ -50,9 +50,10 @@ const validateInterviewSetup = (req, res, next) => {
     return next(new AppError(`Validation error: ${errorMessages.join(', ')}`, 400));
   }
   
+
   // Additional custom validations
   const { resume, jobDescription } = req.body;
-  
+  console.log(resume.data);
   // Validate resume file size (base64 check)
   if (resume.data.length > 50 * 1024 * 1024) { // ~37MB actual file size
     return next(new AppError('Resume file is too large (max 10MB)', 400));

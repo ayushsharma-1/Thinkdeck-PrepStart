@@ -1,32 +1,5 @@
 "use client";
 import axios from "axios";
-// import { SarvamAIClient } from 'sarvamai'; // Sarvam commented out
-// Murf AI TTS function using axios and correct header
-const murfTTS = async (text) => {
-  const apiKey = process.env.NEXT_PUBLIC_MURF_API_KEY;
-  const data = {
-    text,
-    voiceId: "en-US-terrell", // Change to your preferred Murf voice
-  };
-  try {
-    const response = await axios.post(
-      "https://api.murf.ai/v1/speech/generate",
-      data,
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "api-key": apiKey,
-        },
-      }
-    );
-    return response.data.audioFile; // Murf returns audioFile URL
-  } catch (error) {
-    console.error("Murf AI TTS error:", error);
-    return null;
-  }
-};
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -59,6 +32,34 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import io from 'socket.io-client';
+
+// import { SarvamAIClient } from 'sarvamai'; // Sarvam commented out
+// Murf AI TTS function using axios and correct header
+const murfTTS = async (text) => {
+  const apiKey = process.env.NEXT_PUBLIC_MURF_API_KEY;
+  const data = {
+    text,
+    voiceId: "en-US-terrell", // Change to your preferred Murf voice
+  };
+  try {
+    const response = await axios.post(
+      "https://api.murf.ai/v1/speech/generate",
+      data,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "api-key": apiKey,
+        },
+      }
+    );
+    return response.data.audioFile; // Murf returns audioFile URL
+  } catch (error) {
+    console.error("Murf AI TTS error:", error);
+    return null;
+  }
+};
+
 
 const InterviewPage = ({ sessionData, onEndInterview }) => {
   // UI State
@@ -277,6 +278,31 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
     
     try {
       console.log('🎬 Starting interview initialization...');
+      
+      // REQUEST FULLSCREEN FIRST - Before any async operations
+      // This ensures it's triggered close to user interaction
+      setInitializationStep('Entering fullscreen mode...');
+      try {
+        if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+          console.log('✅ Fullscreen mode activated');
+          setIsFullscreen(true);
+        } else if (document.documentElement.webkitRequestFullscreen) {
+          await document.documentElement.webkitRequestFullscreen();
+          console.log('✅ Fullscreen mode activated (webkit)');
+          setIsFullscreen(true);
+        } else if (document.documentElement.mozRequestFullScreen) {
+          await document.documentElement.mozRequestFullScreen();
+          console.log('✅ Fullscreen mode activated (moz)');
+          setIsFullscreen(true);
+        }
+      } catch (fsError) {
+        console.warn('⚠️ Fullscreen request failed:', fsError);
+        toast.warning('Please allow fullscreen for the best interview experience.');
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
       setInitializationStep('Setting up camera and microphone...');
       await new Promise(resolve => setTimeout(resolve, 1000)); // Give user time to read
       
@@ -603,7 +629,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   };
 
   const handleSecurityBreach = (type, count) => {
-    console.error('🚨 CRITICAL SECURITY BREACH:', type, count);
+    console.warn('🚨 CRITICAL SECURITY BREACH:', type, count);
     setIsSecurityModalOpen(true);
     
     // End interview after 5 seconds
@@ -614,10 +640,29 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   };
 
   const initializeSecurity = () => {
-    // Request fullscreen
+    // Request fullscreen (as backup if not already in fullscreen)
     const requestFullscreen = () => {
-      if (document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen().catch(console.error);
+      // Check if already in fullscreen
+      const isCurrentlyFullscreen = !!(document.fullscreenElement || 
+                                      document.webkitFullscreenElement || 
+                                      document.mozFullScreenElement);
+      
+      if (!isCurrentlyFullscreen) {
+        console.log('🔄 Attempting to re-enter fullscreen...');
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(err => {
+            console.warn('⚠️ Fullscreen re-request failed:', err);
+            toast.warning('Please enable fullscreen mode for security.');
+          });
+        } else if (document.documentElement.webkitRequestFullscreen) {
+          document.documentElement.webkitRequestFullscreen().catch(err => {
+            console.warn('⚠️ Fullscreen re-request failed (webkit):', err);
+          });
+        } else if (document.documentElement.mozRequestFullScreen) {
+          document.documentElement.mozRequestFullScreen().catch(err => {
+            console.warn('⚠️ Fullscreen re-request failed (moz):', err);
+          });
+        }
       }
     };
 
@@ -646,7 +691,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       }
     };
 
-    // Fullscreen exit detection
+    // Fullscreen exit detection - STRICT: No exiting allowed!
     const handleFullscreenChange = () => {
       const isCurrentlyFullscreen = !!(document.fullscreenElement || 
                                       document.webkitFullscreenElement || 
@@ -654,43 +699,160 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       
       setIsFullscreen(isCurrentlyFullscreen);
       
-      // Only track violations if interview has been active for more than 10 seconds
+      // Only enforce after grace period
       const interviewStartTime = Date.now() - (timeRemaining * 60 * 1000 - (15 * 60 * 1000));
       const isInterviewSettled = Date.now() - interviewStartTime > 10000; // 10 seconds grace period
       
+      // If user tried to exit fullscreen during interview
       if (!isCurrentlyFullscreen && isInterviewActive && isInterviewSettled) {
         fullscreenExitCountRef.current += 1;
         const count = fullscreenExitCountRef.current;
         
-        console.warn(`🚨 Fullscreen exit detected - Count: ${count}`);
+        console.error(`� FULLSCREEN EXIT ATTEMPT BLOCKED - Count: ${count}`);
         
-        if (count >= 3) { // Changed from 2 to 3 to be more lenient
-          logSecurityViolation('fullscreen_exit_repeated', { count });
-        } else {
-          logSecurityViolation('fullscreen_exit', { count });
-          // Auto re-request fullscreen after 5 seconds (increased from 3)
-          setTimeout(requestFullscreen, 5000);
+        // IMMEDIATELY force fullscreen back on - DO NOT ALLOW EXITING
+        console.log('⚡ Forcing fullscreen mode back on - User cannot exit!');
+        setTimeout(() => {
+          if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(err => {
+              console.error('Failed to re-enter fullscreen:', err);
+            });
+          } else if (document.documentElement.webkitRequestFullscreen) {
+            document.documentElement.webkitRequestFullscreen().catch(err => {
+              console.error('Failed to re-enter fullscreen (webkit):', err);
+            });
+          } else if (document.documentElement.mozRequestFullScreen) {
+            document.documentElement.mozRequestFullScreen().catch(err => {
+              console.error('Failed to re-enter fullscreen (moz):', err);
+            });
+          }
+        }, 100); // Immediately re-enter (100ms)
+        
+        // Log as security violation
+        logSecurityViolation('fullscreen_exit_attempt', { 
+          count, 
+          message: 'User attempted to exit fullscreen - Not allowed!' 
+        });
+        
+        // Show strong warning message
+        toast.error('❌ FULLSCREEN REQUIRED!\n\nYou cannot exit fullscreen during the interview.\n\nYour attempt has been logged.', {
+          duration: 5000,
+          position: 'top-center',
+          style: {
+            maxWidth: '600px',
+            fontSize: '16px',
+            padding: '20px',
+            fontWeight: 'bold'
+          }
+        });
+        
+        // After 3 attempts, terminate interview
+        if (count >= 3) {
+          console.warn('User made 3+ fullscreen exit attempts - Terminating interview');
+          logSecurityViolation('repeated_fullscreen_exit_attempts', { 
+            count,
+            message: 'Interview terminated due to repeated fullscreen exit attempts' 
+          });
+          
+          toast.error('🚨 INTERVIEW TERMINATED\n\nMultiple attempts to exit fullscreen detected.\n\nThe interview has been ended for security reasons.', {
+            duration: 6000,
+            position: 'top-center',
+            style: {
+              maxWidth: '600px',
+              fontSize: '16px',
+              padding: '20px',
+              fontWeight: 'bold',
+              backgroundColor: '#dc2626'
+            }
+          });
+          
+          // End interview after 3 seconds
+          setTimeout(() => {
+            handleInterviewEnd();
+            onEndInterview?.();
+          }, 3000);
         }
       } else if (!isCurrentlyFullscreen && isInterviewActive && !isInterviewSettled) {
-        // During grace period, just request fullscreen without logging violation
-        console.log('🟡 Fullscreen exit during grace period - requesting return');
-        setTimeout(requestFullscreen, 2000);
+        // During grace period (first 10 seconds), just re-request without violation
+        console.log('🟡 Fullscreen exit during grace period - requesting return silently');
+        setTimeout(() => {
+          if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(() => {});
+          } else if (document.documentElement.webkitRequestFullscreen) {
+            document.documentElement.webkitRequestFullscreen().catch(() => {});
+          } else if (document.documentElement.mozRequestFullScreen) {
+            document.documentElement.mozRequestFullScreen().catch(() => {});
+          }
+        }, 100);
+      } else if (isCurrentlyFullscreen && isInterviewActive) {
+        // Back in fullscreen - all good
+        console.log('✅ Back in fullscreen mode');
       }
     };
 
     // Keyboard shortcuts prevention
     const handleKeyDown = (e) => {
-      // Prevent common cheating shortcuts
+      // Prevent common cheating shortcuts AND fullscreen exit attempts
       const forbiddenKeys = [
         'F12', // DevTools
         'F5',  // Refresh
         'PrintScreen', // Screenshot
+        'F11', // Fullscreen toggle - CRITICAL: Prevent F11 to prevent fullscreen exit
       ];
+      
+      // BLOCK F11 specifically with strong warning
+      if (e.key === 'F11') {
+        e.preventDefault();
+        console.warn('F11 Fullscreen toggle blocked');
+        toast.error('❌ Cannot disable fullscreen!\n\nFullscreen mode is required for this interview.\n\nAttempt logged.', {
+          duration: 4000,
+          position: 'top-center',
+          style: {
+            maxWidth: '500px',
+            fontSize: '14px',
+            padding: '15px'
+          }
+        });
+        logSecurityViolation('fullscreen_toggle_attempt', { 
+          message: 'User attempted to press F11 to toggle fullscreen' 
+        });
+        return;
+      }
+      
+      // Block ESC key to prevent fullscreen exit
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        console.warn('ESC key blocked - Fullscreen exit attempt detected');
+        toast.error('❌ Cannot exit fullscreen!\n\nYou must stay in fullscreen during the interview.\n\nAttempt logged.', {
+          duration: 4000,
+          position: 'top-center',
+          style: {
+            maxWidth: '500px',
+            fontSize: '14px',
+            padding: '15px'
+          }
+        });
+        logSecurityViolation('escape_key_attempt', { 
+          message: 'User attempted to press ESC to exit fullscreen' 
+        });
+        
+        // Force fullscreen back on immediately
+        setTimeout(() => {
+          if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(() => {});
+          } else if (document.documentElement.webkitRequestFullscreen) {
+            document.documentElement.webkitRequestFullscreen().catch(() => {});
+          } else if (document.documentElement.mozRequestFullScreen) {
+            document.documentElement.mozRequestFullScreen().catch(() => {});
+          }
+        }, 100);
+        return;
+      }
       
       if (forbiddenKeys.includes(e.key) ||
           (e.ctrlKey && ['c', 'v', 'x', 'a', 'f', 's', 'r', 't', 'w', 'shift+i', 'shift+j', 'u'].includes(e.key.toLowerCase())) ||
-          (e.altKey && e.key === 'Tab') || // Alt+Tab
-          e.key === 'F11') { // Fullscreen toggle
+          (e.altKey && e.key === 'Tab')) { // Alt+Tab
         
         e.preventDefault();
         e.stopPropagation();
@@ -722,7 +884,13 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
     // Set up event listeners
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleWindowBlur);
+    
+    // Add fullscreen change listeners for all browsers
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+    
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('contextmenu', handleContextMenu);
     
@@ -731,8 +899,19 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       document.addEventListener(event, handleUserActivity, true);
     });
 
-    // Start fullscreen
-    requestFullscreen();
+    // Verify fullscreen (don't force it here, as it should already be active from initialization)
+    // Only request if somehow not in fullscreen
+    setTimeout(() => {
+      const isCurrentlyFullscreen = !!(document.fullscreenElement || 
+                                      document.webkitFullscreenElement || 
+                                      document.mozFullScreenElement);
+      if (!isCurrentlyFullscreen) {
+        console.log('⚠️ Not in fullscreen, attempting to re-enter...');
+        requestFullscreen();
+      } else {
+        console.log('✅ Already in fullscreen mode');
+      }
+    }, 500);
 
     // Start inactivity monitoring
     const inactivityTimer = setInterval(checkInactivity, 30000); // Check every 30 seconds
@@ -741,7 +920,13 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('blur', handleWindowBlur);
+      
+      // Remove fullscreen change listeners for all browsers
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+      
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('contextmenu', handleContextMenu);
       
@@ -1335,26 +1520,124 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
         setIsScreenSharing(false);
         toast.success('Screen sharing stopped');
       } else {
-        // Start screen sharing
-        const stream = await navigator.mediaDevices.getDisplayMedia({ 
-          video: true,
-          audio: false 
+        // Start screen sharing - ENFORCE ENTIRE SCREEN ONLY
+        // Show instruction before opening dialog
+        toast.info('📺 Please select "Entire Screen" option (NOT tab or window)', {
+          duration: 3000
         });
+        
+        const stream = await navigator.mediaDevices.getDisplayMedia({ 
+          video: {
+            displaySurface: 'monitor',  // Request entire screen (preference only)
+            cursor: 'always',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false,
+          preferCurrentTab: false,
+          surfaceSwitching: 'exclude',
+          selfBrowserSurface: 'exclude'
+        });
+        
+        // STRICT VALIDATION: Check what user actually selected
+        const videoTrack = stream.getVideoTracks()[0];
+        
+        if (!videoTrack) {
+          stream.getTracks().forEach(track => track.stop());
+          toast.error('No video track found. Please try again.');
+          return;
+        }
+        
+        const settings = videoTrack.getSettings();
+        
+        console.log('🖥️ Screen share settings:', {
+          displaySurface: settings.displaySurface,
+          width: settings.width,
+          height: settings.height,
+          deviceId: settings.deviceId
+        });
+        
+        // CRITICAL VALIDATION: REJECT if not entire screen (monitor)
+        // displaySurface values: 'monitor' (entire screen), 'window', 'browser' (tab), or undefined
+        const displaySurface = settings.displaySurface;
+        
+        if (!displaySurface || displaySurface !== 'monitor') {
+          // User selected tab or window or unknown - IMMEDIATELY STOP and REJECT
+          stream.getTracks().forEach(track => track.stop());
+          
+          let rejectionMessage = '';
+          let selectedType = '';
+          
+          if (displaySurface === 'browser') {
+            selectedType = 'TAB';
+            rejectionMessage = '🚫 TAB SHARING NOT ALLOWED!\n\nYou selected a browser tab. For interview security, you MUST share your ENTIRE SCREEN.\n\nClick the screen share button again and select "Entire Screen" from the options.';
+          } else if (displaySurface === 'window') {
+            selectedType = 'WINDOW';
+            rejectionMessage = '🚫 WINDOW SHARING NOT ALLOWED!\n\nYou selected a single window. For interview security, you MUST share your ENTIRE SCREEN.\n\nClick the screen share button again and select "Entire Screen" from the options.';
+          } else {
+            selectedType = 'UNKNOWN';
+            rejectionMessage = '⚠️ INVALID SELECTION!\n\nUnable to verify screen share type. You MUST share your ENTIRE SCREEN (not a tab or window).\n\nClick the screen share button again and carefully select "Entire Screen" option.';
+          }
+          
+          console.error(`🚫 SCREEN SHARE REJECTED: User selected ${selectedType} (displaySurface: ${displaySurface || 'undefined'})`);
+          
+          toast.error(rejectionMessage, {
+            duration: 8000,
+            position: 'top-center',
+            style: {
+              maxWidth: '500px',
+              fontSize: '14px',
+              padding: '20px'
+            }
+          });
+          
+          // Also log as security violation
+          logSecurityViolation('invalid_screen_share_attempt', {
+            displaySurface: displaySurface || 'undefined',
+            attemptedType: selectedType,
+            timestamp: new Date().toISOString()
+          });
+          
+          return; // Exit without activating screen share
+        }
+        
+        // ✅ VALIDATION PASSED: User correctly selected entire screen
+        console.log('✅ SCREEN SHARE APPROVED: Entire screen (monitor) selected');
+        
         if (screenShareRef.current) {
           screenShareRef.current.srcObject = stream;
         }
         setIsScreenSharing(true);
-        toast.success('Screen sharing started');
+        toast.success('✅ Screen Sharing Active - Your entire screen is now being shared', {
+          duration: 4000,
+          icon: '🖥️'
+        });
 
         // Listen for screen share end
-        stream.getVideoTracks()[0].addEventListener('ended', () => {
+        videoTrack.addEventListener('ended', () => {
           setIsScreenSharing(false);
+          if (screenShareRef.current?.srcObject) {
+            screenShareRef.current.srcObject = null;
+          }
           toast.info('Screen sharing ended');
+          console.log('📺 Screen sharing ended by user');
         });
       }
     } catch (error) {
-      console.error('Error toggling screen share:', error);
-      toast.error('Failed to toggle screen sharing');
+      console.error('❌ Error toggling screen share:', error);
+      
+      // Provide specific error messages based on error type
+      if (error.name === 'NotAllowedError') {
+        toast.error('❌ Screen sharing permission denied. Please allow screen sharing and select "Entire Screen".');
+      } else if (error.name === 'NotFoundError') {
+        toast.error('❌ No screen available to share. Please check your system settings.');
+      } else if (error.name === 'AbortError') {
+        toast.warning('⚠️ Screen sharing cancelled. Remember to select "Entire Screen" option when you try again.');
+      } else if (error.name === 'NotSupportedError') {
+        toast.error('❌ Screen sharing is not supported in your browser. Please use Chrome, Edge, or Firefox.');
+      } else {
+        toast.error(`❌ Failed to start screen sharing: ${error.message}`);
+      }
     }
   };
 

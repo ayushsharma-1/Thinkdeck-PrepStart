@@ -266,6 +266,69 @@ class InterviewController {
       next(error);
     }
   }
+
+  // Complete interview and send for evaluation
+  static async completeInterview(req, res, next) {
+    try {
+      const { sessionId } = req.body;
+      
+      if (!sessionId) {
+        return next(new AppError('Session ID is required', 400));
+      }
+
+      // Get session from database
+      const session = await Session.findOne({ sessionId });
+      if (!session) {
+        return next(new AppError('Session not found', 404));
+      }
+
+      // Update session status to completed
+      session.status = 'completed';
+      session.completedAt = new Date();
+      await session.save();
+
+      // Send evaluation request to FastAPI via RabbitMQ
+      const evaluationRequest = {
+        session_id: sessionId,
+        resume_text: session.resumeText,
+        job_description: session.jobDescription,
+        role_name: session.roleName,
+        user_details: session.userDetails,
+        questions: session.questions.map(q => ({
+          number: q.number,
+          text: q.text,
+          topic: q.topic,
+          difficulty: q.difficulty
+        })),
+        responses: session.responses.map(r => ({
+          question_number: r.questionNumber,
+          response: r.response,
+          timestamp: r.timestamp
+        }))
+      };
+
+      await sendToQueue(
+        process.env.RABBITMQ_EVALUATION_QUEUE || 'evaluation',
+        {
+          message_type: 'interview_evaluation',
+          ...evaluationRequest
+        }
+      );
+
+      logger.info(`Interview completed and sent for evaluation: ${sessionId}`);
+
+      res.json({
+        success: true,
+        sessionId,
+        message: 'Interview completed successfully. Results will be available shortly.',
+        status: 'completed'
+      });
+
+    } catch (error) {
+      logger.error('Error in completeInterview:', error);
+      next(error);
+    }
+  }
 }
 
 module.exports = InterviewController;

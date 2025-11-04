@@ -16,4 +16,7 @@ router.post('/submit-response', validateResponse, InterviewController.submitResp
 // Get session details
 router.get('/session/:sessionId', InterviewController.getSession);
 
+// Complete interview and send for evaluation
+router.post('/complete-interview', InterviewController.completeInterview);
+
 module.exports = router;
