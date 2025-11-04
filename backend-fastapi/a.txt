@@ -1,0 +1,1 @@
+Set-Location -Path "C:\Users\ashmi\Desktop\del\Thinkdeck-PrepStart\backend-fastapi"; & "C:\Users\ashmi\Desktop\del\Thinkdeck-PrepStart\.venv\Scripts\python.exe" main.py
