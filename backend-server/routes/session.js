@@ -187,6 +187,43 @@ router.get('/sessions', async (req, res, next) => {
   }
 });
 
+// Receive monitoring events from client (eye contact, objects, multiple people)
+router.post('/monitoring-event', async (req, res, next) => {
+  try {
+    const { sessionId, eventType, details, timestamp } = req.body;
+
+    if (!sessionId || !eventType) {
+      return res.status(400).json({ success: false, message: 'sessionId and eventType are required' });
+    }
+
+    const eventData = {
+      session_id: sessionId,
+      event_type: eventType,
+      details: details || {},
+      timestamp: timestamp || new Date().toISOString()
+    };
+
+    try {
+      const redisClient = getRedisClient();
+      if (redisClient) {
+        const redisKey = `interview:${sessionId}:monitoring`;
+        await redisClient.rPush(redisKey, JSON.stringify(eventData));
+        await redisClient.expire(redisKey, parseInt(process.env.REDIS_TTL) || 3600);
+        logger.info(`Monitoring event stored for session ${sessionId}: ${eventType}`);
+      }
+    } catch (redisError) {
+      logger.warn(`Failed to store monitoring event in Redis: ${redisError.message}`);
+    }
+
+    // Optionally publish to RabbitMQ or other logging
+
+    res.json({ success: true, event: eventData });
+  } catch (error) {
+    logger.error('Error in /monitoring-event:', error);
+    next(error);
+  }
+});
+
 // Delete session (admin endpoint)
 router.delete('/session/:sessionId', async (req, res, next) => {
   try {
@@ -599,6 +636,8 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
       
       // Get additional responses from Redis
       let redisResponses = [];
+      // Get monitoring events (eye contact, object detection, multiple people)
+      let monitoringEvents = [];
       try {
         const redisClient = getRedisClient();
         if (redisClient) {
@@ -611,6 +650,19 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
       } catch (redisError) {
         console.log(`[BACKEND] ${requestId} - Failed to retrieve responses from Redis:`, redisError.message);
         logger.warn('Failed to retrieve responses from Redis:', redisError.message);
+      }
+
+      try {
+        const redisClient = getRedisClient();
+        if (redisClient) {
+          const monitorKey = `interview:${sessionId}:monitoring`;
+          const monitorData = await redisClient.lRange(monitorKey, 0, -1);
+          monitoringEvents = monitorData.map(d => JSON.parse(d));
+          console.log(`[BACKEND] ${requestId} - Retrieved ${monitoringEvents.length} monitoring events from Redis for session: ${sessionId}`);
+          logger.info(`Retrieved ${monitoringEvents.length} monitoring events from Redis for session: ${sessionId}`);
+        }
+      } catch (monitorErr) {
+        console.log(`[BACKEND] ${requestId} - Failed to retrieve monitoring events from Redis:`, monitorErr.message);
       }
       
       // Combine MongoDB and Redis responses
@@ -645,6 +697,8 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
         is_clarification_request: shouldRepeatQuestion,
         original_question: shouldRepeatQuestion ? (session.questions.find(q => q.questionNumber === nextQuestionNumber)?.question || '') : null,
         partial_answer_data: partialAnswerData // Include partial answer information
+        ,
+        monitoring_events: monitoringEvents
       };
       
       console.log(`[BACKEND] ${requestId} - Sending request to FastAPI AI service`);

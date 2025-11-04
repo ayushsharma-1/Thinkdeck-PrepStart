@@ -29,7 +29,8 @@ class QuestionService:
         previous_responses: Optional[List[Dict]] = None,
         covered_topics: Optional[List[str]] = None,
         is_clarification_request: bool = False,
-        original_question: Optional[str] = None
+        original_question: Optional[str] = None,
+        partial_answer_data: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Generate a question using AI providers with fallback"""
         
@@ -51,7 +52,8 @@ class QuestionService:
                 previous_responses=previous_responses,
                 covered_topics=covered_topics,
                 is_clarification_request=is_clarification_request,
-                original_question=original_question
+                original_question=original_question,
+                partial_answer_data=partial_answer_data
             )
             
             logger.info(f"Question generated using AI service for session {session_id}")

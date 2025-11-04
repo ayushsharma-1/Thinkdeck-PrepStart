@@ -13,6 +13,8 @@ class QuestionGenerationRequest(BaseModel):
     covered_topics: List[str] = []
     is_clarification_request: bool = False
     original_question: Optional[str] = None
+    partial_answer_data: Optional[Dict[str, Any]] = None
+    monitoring_events: Optional[List[Dict[str, Any]]] = None
     
     @validator('session_id')
     def validate_session_id(cls, v):

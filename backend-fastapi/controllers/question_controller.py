@@ -105,8 +105,10 @@ async def generate_question(request: QuestionGenerationRequest):
             question_number=request.question_number,
             previous_responses=request.previous_responses,
             covered_topics=request.covered_topics,
-            is_clarification_request=request.is_clarification_request,
-            original_question=request.original_question
+                is_clarification_request=request.is_clarification_request,
+                original_question=request.original_question,
+                partial_answer_data=getattr(request, 'partial_answer_data', None),
+                monitoring_events=getattr(request, 'monitoring_events', None)
         )
         
         logger.info(f"CONTROLLER: Question generated successfully for session: {request.session_id}")
