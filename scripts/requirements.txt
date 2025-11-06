@@ -1,0 +1,7 @@
+# Requirements for local monitoring agent
+ultralytics
+opencv-python
+numpy
+requests
+# Note: ultralytics may require torch. If you need CPU-only PyTorch, install a compatible wheel, for example:
+# pip install torch --index-url https://download.pytorch.org/whl/cpu

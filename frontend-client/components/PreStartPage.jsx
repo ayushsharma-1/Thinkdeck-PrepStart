@@ -23,6 +23,13 @@ const PreStartPage = ({ permissions, onPermissionsUpdate, onNext }) => {
       
       // Stop the stream immediately as we're just checking permissions
       stream.getTracks().forEach(track => track.stop());
+
+      // Mark that the camera was checked and should be opened when interview actually starts
+      try {
+        sessionStorage.setItem('openCameraOnInterviewStart', 'true');
+      } catch (e) {
+        // ignore storage errors
+      }
     } catch (error) {
       console.error('Camera permission denied:', error);
       onPermissionsUpdate({ camera: false });
@@ -99,6 +106,13 @@ const PreStartPage = ({ permissions, onPermissionsUpdate, onNext }) => {
       
       // Stop the stream
       stream.getTracks().forEach(track => track.stop());
+
+      // Mark that the camera was checked and should be opened when interview actually starts
+      try {
+        sessionStorage.setItem('openCameraOnInterviewStart', 'true');
+      } catch (e) {
+        // ignore storage errors
+      }
     } catch (error) {
       console.error('Media permission denied:', error);
       toast.error('Please allow camera and microphone access to continue.');

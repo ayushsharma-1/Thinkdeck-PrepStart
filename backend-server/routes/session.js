@@ -187,10 +187,31 @@ router.get('/sessions', async (req, res, next) => {
   }
 });
 
+// Temporary debug endpoint to echo request body and headers
+router.post('/debug-echo', async (req, res, next) => {
+  try {
+    // Send back how Express parsed the body and the content-type header
+    return res.json({
+      success: true,
+      contentType: req.headers['content-type'] || null,
+      parsedBody: req.body
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Receive monitoring events from client (eye contact, objects, multiple people)
 router.post('/monitoring-event', async (req, res, next) => {
   try {
-    const { sessionId, eventType, details, timestamp } = req.body;
+    // Safely read body to avoid throwing when req.body is undefined
+    const rawBody = req.body || {};
+
+    // Always print minimal debug info to stdout for quick debugging in dev
+    console.log('[DEBUG] /monitoring-event headers:', req.headers && req.headers['content-type']);
+    console.log('[DEBUG] /monitoring-event raw body:', rawBody);
+
+    const { sessionId, eventType, details, timestamp } = rawBody;
 
     if (!sessionId || !eventType) {
       return res.status(400).json({ success: false, message: 'sessionId and eventType are required' });
@@ -204,7 +225,15 @@ router.post('/monitoring-event', async (req, res, next) => {
     };
 
     try {
-      const redisClient = getRedisClient();
+      let redisClient = null;
+      try {
+        // getRedisClient throws if not connected; avoid letting that bubble up
+        redisClient = getRedisClient();
+      } catch (getErr) {
+        logger.warn(`Redis client unavailable when storing monitoring event: ${getErr.message}`);
+        redisClient = null;
+      }
+
       if (redisClient) {
         const redisKey = `interview:${sessionId}:monitoring`;
         await redisClient.rPush(redisKey, JSON.stringify(eventData));
@@ -220,6 +249,43 @@ router.post('/monitoring-event', async (req, res, next) => {
     res.json({ success: true, event: eventData });
   } catch (error) {
     logger.error('Error in /monitoring-event:', error);
+    next(error);
+  }
+});
+
+// Receive raw frames from client for server-side processing (optional)
+router.post('/monitoring-frame', async (req, res, next) => {
+  try {
+    const { sessionId, image_base64, timestamp } = req.body;
+
+    if (!sessionId || !image_base64) {
+      return res.status(400).json({ success: false, message: 'sessionId and image_base64 are required' });
+    }
+
+    const frameEvent = {
+      session_id: sessionId,
+      event_type: 'frame',
+      data: image_base64,
+      timestamp: timestamp || new Date().toISOString()
+    };
+
+    try {
+      const redisClient = getRedisClient();
+      if (redisClient) {
+        const redisKey = `interview:${sessionId}:monitoring_frames`;
+        await redisClient.rPush(redisKey, JSON.stringify(frameEvent));
+        await redisClient.expire(redisKey, parseInt(process.env.REDIS_TTL) || 3600);
+        logger.info(`Monitoring frame stored for session ${sessionId}`);
+      }
+    } catch (redisError) {
+      logger.warn(`Failed to store monitoring frame in Redis: ${redisError.message}`);
+    }
+
+    // Optionally publish to RabbitMQ for async processing by a worker (not required)
+
+    res.json({ success: true, event: { sessionId, stored: true } });
+  } catch (error) {
+    logger.error('Error in /monitoring-frame:', error);
     next(error);
   }
 });
@@ -381,6 +447,17 @@ router.post('/get-session', async (req, res, next) => {
       await session.save();
       console.log(`💾 [${requestId}] New session saved:`, newSessionId);
       logger.info(`New session created: ${newSessionId}`);
+      // Notify any connected monitoring agents (via Socket.IO) to start camera when interview begins
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          const streamPort = process.env.MONITOR_STREAM_PORT || 8081;
+          io.to(session.sessionId).emit('start-monitoring', { sessionId: session.sessionId, streamPort });
+          logger.info(`Emitted start-monitoring for session: ${session.sessionId}`);
+        }
+      } catch (emitErr) {
+        logger.warn(`Failed to emit start-monitoring event: ${emitErr.message}`);
+      }
       
       // Generate first question using FastAPI AI service
       let firstQuestion = `Hello ${session.userDetails.name}! I'm excited to interview you today for the ${session.roleName} position. Let's start with a simple question: Can you tell me about yourself and why you're interested in this position?`;
@@ -560,6 +637,20 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
             completeData.answered_parts = evaluationResult.answered_parts || [];
             completeData.missing_parts = evaluationResult.missing_parts || [];
             completeData.evaluation_reasoning = evaluationResult.reasoning || '';
+            // Persist per-question parts-tracking into the Mongo session record
+            try {
+              if (currentQuestion) {
+                currentQuestion.parts_state = currentQuestion.parts_state || {};
+                currentQuestion.parts_state.parts_identified = evaluationResult.parts_identified || [];
+                currentQuestion.parts_state.answered_parts = evaluationResult.answered_parts || [];
+                currentQuestion.parts_state.missing_parts = evaluationResult.missing_parts || [];
+                currentQuestion.parts_state.last_evaluated_at = new Date().toISOString();
+                // note: session.save() is done later in this request flow
+                logger.info(`Updated session question ${sessionId}#${session.currentQuestionNumber} parts_state`);
+              }
+            } catch (partsErr) {
+              logger.warn(`Failed to attach parts_state to session question: ${partsErr.message}`);
+            }
           }
           
           // Re-store with confidence data
