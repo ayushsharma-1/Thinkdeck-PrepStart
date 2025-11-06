@@ -125,4 +125,4 @@ env.bak/
 venv.bak/
 
 # Models
-scripts/yolov8n.pt
+# scripts/yolov8n.pt
