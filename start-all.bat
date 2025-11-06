@@ -85,7 +85,15 @@ if exist package.json (
     echo INFO: Frontend not found, skipping...
 )
 
-cd..
+@REM cd..
+ 
+@REM echo.
+@REM echo [5/5] Starting Monitoring Agent...
+@REM if exist "scripts\run_agent.ps1" (
+@REM     start "PrepStart Agent" cmd /k "powershell -NoExit -ExecutionPolicy Bypass -Command \"& '.\\scripts\\run_agent.ps1' -InstallDeps:$false\""
+@REM ) else (
+@REM     echo INFO: run_agent.ps1 not found, skipping agent start...
+@REM )
 
 echo.
 echo ========================================

@@ -10,6 +10,92 @@ const { validateGenerateNextQuestion } = require('../utils/validation');
 
 const router = express.Router();
 
+// Confidence evaluation function with partial answer detection
+async function evaluateResponseConfidence(question, response, roleName, topic) {
+  try {
+    // Call FastAPI backend for AI-based confidence evaluation
+    const evaluationPayload = {
+      question: question,
+      response: response,
+      role_name: roleName,
+      topic: topic
+    };
+    
+    console.log(`[CONFIDENCE] Evaluating response confidence with partial answer detection...`);
+    const aiResponse = await axios.post('http://localhost:8000/api/evaluate-response-confidence', evaluationPayload, { 
+      timeout: 10000 
+    });
+    
+    if (aiResponse.data.success && aiResponse.data.confidence_score !== undefined) {
+      // Return full evaluation result for partial answer handling
+      return {
+        confidence_score: Math.round(aiResponse.data.confidence_score),
+        is_multipart: aiResponse.data.is_multipart || false,
+        parts_identified: aiResponse.data.parts_identified || [],
+        answered_parts: aiResponse.data.answered_parts || [],
+        missing_parts: aiResponse.data.missing_parts || [],
+        reasoning: aiResponse.data.reasoning || '',
+        evaluation_method: aiResponse.data.evaluation_method || 'ai_based'
+      };
+    }
+  } catch (aiError) {
+    console.log(`[CONFIDENCE] AI evaluation failed, using fallback:`, aiError.message);
+  }
+  
+  // Fallback confidence scoring based on response characteristics
+  const fallbackScore = calculateBasicConfidenceScore(question, response, topic);
+  return {
+    confidence_score: fallbackScore,
+    is_multipart: false,
+    parts_identified: [],
+    answered_parts: [],
+    missing_parts: [],
+    reasoning: 'Fallback rule-based evaluation used',
+    evaluation_method: 'rule_based'
+  };
+}
+
+function calculateBasicConfidenceScore(question, response, topic) {
+  let score = 50; // Base score
+  
+  // Length-based scoring
+  const wordCount = response.trim().split(/\s+/).length;
+  if (wordCount < 5) score -= 30;
+  else if (wordCount < 10) score -= 10;
+  else if (wordCount > 20) score += 10;
+  else if (wordCount > 50) score += 20;
+  
+  // Content quality indicators
+  const lowerResponse = response.toLowerCase();
+  
+  // Positive indicators
+  if (lowerResponse.includes('experience')) score += 10;
+  if (lowerResponse.includes('project')) score += 10;
+  if (lowerResponse.includes('skill')) score += 10;
+  if (lowerResponse.includes('learn')) score += 5;
+  if (lowerResponse.includes('challenge')) score += 5;
+  
+  // Topic-specific scoring
+  if (topic.toLowerCase() === 'general') {
+    if (lowerResponse.includes('myself') || lowerResponse.includes('background')) score += 15;
+    if (lowerResponse.includes('interested') || lowerResponse.includes('passion')) score += 10;
+  }
+  
+  // Negative indicators
+  if (lowerResponse.length < 20) score -= 20;
+  if (lowerResponse === response) score -= 5; // No capitalization
+  if (!lowerResponse.includes('.') && !lowerResponse.includes('!') && !lowerResponse.includes('?')) score -= 5;
+  
+  // Generic responses
+  const genericPhrases = ['i like', 'it is good', 'yes', 'no', 'ok', 'fine'];
+  if (genericPhrases.some(phrase => lowerResponse.includes(phrase) && wordCount < 10)) {
+    score -= 25;
+  }
+  
+  // Ensure score is within bounds
+  return Math.max(0, Math.min(100, score));
+}
+
 // Configure multer for file uploads
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -97,6 +183,109 @@ router.get('/sessions', async (req, res, next) => {
     });
     
   } catch (error) {
+    next(error);
+  }
+});
+
+// Temporary debug endpoint to echo request body and headers
+router.post('/debug-echo', async (req, res, next) => {
+  try {
+    // Send back how Express parsed the body and the content-type header
+    return res.json({
+      success: true,
+      contentType: req.headers['content-type'] || null,
+      parsedBody: req.body
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Receive monitoring events from client (eye contact, objects, multiple people)
+router.post('/monitoring-event', async (req, res, next) => {
+  try {
+    // Safely read body to avoid throwing when req.body is undefined
+    const rawBody = req.body || {};
+
+    // Always print minimal debug info to stdout for quick debugging in dev
+    console.log('[DEBUG] /monitoring-event headers:', req.headers && req.headers['content-type']);
+    console.log('[DEBUG] /monitoring-event raw body:', rawBody);
+
+    const { sessionId, eventType, details, timestamp } = rawBody;
+
+    if (!sessionId || !eventType) {
+      return res.status(400).json({ success: false, message: 'sessionId and eventType are required' });
+    }
+
+    const eventData = {
+      session_id: sessionId,
+      event_type: eventType,
+      details: details || {},
+      timestamp: timestamp || new Date().toISOString()
+    };
+
+    try {
+      let redisClient = null;
+      try {
+        // getRedisClient throws if not connected; avoid letting that bubble up
+        redisClient = getRedisClient();
+      } catch (getErr) {
+        logger.warn(`Redis client unavailable when storing monitoring event: ${getErr.message}`);
+        redisClient = null;
+      }
+
+      if (redisClient) {
+        const redisKey = `interview:${sessionId}:monitoring`;
+        await redisClient.rPush(redisKey, JSON.stringify(eventData));
+        await redisClient.expire(redisKey, parseInt(process.env.REDIS_TTL) || 3600);
+        logger.info(`Monitoring event stored for session ${sessionId}: ${eventType}`);
+      }
+    } catch (redisError) {
+      logger.warn(`Failed to store monitoring event in Redis: ${redisError.message}`);
+    }
+
+    // Optionally publish to RabbitMQ or other logging
+
+    res.json({ success: true, event: eventData });
+  } catch (error) {
+    logger.error('Error in /monitoring-event:', error);
+    next(error);
+  }
+});
+
+// Receive raw frames from client for server-side processing (optional)
+router.post('/monitoring-frame', async (req, res, next) => {
+  try {
+    const { sessionId, image_base64, timestamp } = req.body;
+
+    if (!sessionId || !image_base64) {
+      return res.status(400).json({ success: false, message: 'sessionId and image_base64 are required' });
+    }
+
+    const frameEvent = {
+      session_id: sessionId,
+      event_type: 'frame',
+      data: image_base64,
+      timestamp: timestamp || new Date().toISOString()
+    };
+
+    try {
+      const redisClient = getRedisClient();
+      if (redisClient) {
+        const redisKey = `interview:${sessionId}:monitoring_frames`;
+        await redisClient.rPush(redisKey, JSON.stringify(frameEvent));
+        await redisClient.expire(redisKey, parseInt(process.env.REDIS_TTL) || 3600);
+        logger.info(`Monitoring frame stored for session ${sessionId}`);
+      }
+    } catch (redisError) {
+      logger.warn(`Failed to store monitoring frame in Redis: ${redisError.message}`);
+    }
+
+    // Optionally publish to RabbitMQ for async processing by a worker (not required)
+
+    res.json({ success: true, event: { sessionId, stored: true } });
+  } catch (error) {
+    logger.error('Error in /monitoring-frame:', error);
     next(error);
   }
 });
@@ -258,6 +447,17 @@ router.post('/get-session', async (req, res, next) => {
       await session.save();
       console.log(`💾 [${requestId}] New session saved:`, newSessionId);
       logger.info(`New session created: ${newSessionId}`);
+      // Notify any connected monitoring agents (via Socket.IO) to start camera when interview begins
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          const streamPort = process.env.MONITOR_STREAM_PORT || 8081;
+          io.to(session.sessionId).emit('start-monitoring', { sessionId: session.sessionId, streamPort });
+          logger.info(`Emitted start-monitoring for session: ${session.sessionId}`);
+        }
+      } catch (emitErr) {
+        logger.warn(`Failed to emit start-monitoring event: ${emitErr.message}`);
+      }
       
       // Generate first question using FastAPI AI service
       let firstQuestion = `Hello ${session.userDetails.name}! I'm excited to interview you today for the ${session.roleName} position. Let's start with a simple question: Can you tell me about yourself and why you're interested in this position?`;
@@ -412,6 +612,50 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
           await redisClient.expire(redisKey, parseInt(process.env.REDIS_TTL) || 3600);
           console.log(`[BACKEND] ${requestId} - Complete Q&A pair stored in Redis for session: ${sessionId}`);
           logger.info(`Complete Q&A pair stored in Redis for session: ${sessionId}, question: ${session.currentQuestionNumber}`);
+          
+          // Evaluate response confidence/quality with partial answer detection
+          const evaluationResult = await evaluateResponseConfidence(
+            currentQuestion ? currentQuestion.question : 'Unknown question',
+            responseText,
+            session.roleName,
+            currentQuestion ? currentQuestion.topic : 'General'
+          );
+          
+          const confidenceScore = typeof evaluationResult === 'number' ? evaluationResult : evaluationResult.confidence_score || 0;
+          
+          console.log(`[BACKEND] ${requestId} - Response confidence score: ${confidenceScore}% for session: ${sessionId}`);
+          logger.info(`Response confidence score: ${confidenceScore}% for session: ${sessionId}, question: ${session.currentQuestionNumber}`);
+          
+          // Update the stored data with confidence score and partial answer info
+          completeData.confidence_score = confidenceScore;
+          completeData.needs_clarification = confidenceScore < 60; // Threshold for re-asking
+          
+          // Add partial answer detection data if available
+          if (typeof evaluationResult === 'object' && evaluationResult) {
+            completeData.is_multipart = evaluationResult.is_multipart || false;
+            completeData.parts_identified = evaluationResult.parts_identified || [];
+            completeData.answered_parts = evaluationResult.answered_parts || [];
+            completeData.missing_parts = evaluationResult.missing_parts || [];
+            completeData.evaluation_reasoning = evaluationResult.reasoning || '';
+            // Persist per-question parts-tracking into the Mongo session record
+            try {
+              if (currentQuestion) {
+                currentQuestion.parts_state = currentQuestion.parts_state || {};
+                currentQuestion.parts_state.parts_identified = evaluationResult.parts_identified || [];
+                currentQuestion.parts_state.answered_parts = evaluationResult.answered_parts || [];
+                currentQuestion.parts_state.missing_parts = evaluationResult.missing_parts || [];
+                currentQuestion.parts_state.last_evaluated_at = new Date().toISOString();
+                // note: session.save() is done later in this request flow
+                logger.info(`Updated session question ${sessionId}#${session.currentQuestionNumber} parts_state`);
+              }
+            } catch (partsErr) {
+              logger.warn(`Failed to attach parts_state to session question: ${partsErr.message}`);
+            }
+          }
+          
+          // Re-store with confidence data
+          await redisClient.lPop(redisKey); // Remove the last stored item
+          await redisClient.rPush(redisKey, JSON.stringify(completeData));
         }
       } catch (redisError) {
         console.log(`[BACKEND] ${requestId} - Failed to store Q&A pair in Redis:`, redisError.message);
@@ -419,8 +663,47 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
       }
     }
     
+    // Check confidence score and partial answer status to decide next action
+    let shouldRepeatQuestion = false;
+    let nextQuestionNumber = session.currentQuestionNumber + 1;
+    let partialAnswerData = null;
+    
+    if (responseText) {
+      // Get the confidence score and partial answer data from the stored data
+      const redisClient = getRedisClient();
+      try {
+        const redisKey = `interview:${sessionId}:qa_pairs`;
+        const latestData = await redisClient.lIndex(redisKey, -1); // Get the last stored item
+        if (latestData) {
+          const parsedData = JSON.parse(latestData);
+          const confidenceScore = parsedData.confidence_score || 0;
+          
+          if (confidenceScore < 60) { // Low confidence threshold
+            shouldRepeatQuestion = true;
+            nextQuestionNumber = session.currentQuestionNumber; // Same question number
+            
+            // Store partial answer data for targeted clarification
+            partialAnswerData = {
+              is_multipart: parsedData.is_multipart || false,
+              parts_identified: parsedData.parts_identified || [],
+              answered_parts: parsedData.answered_parts || [],
+              missing_parts: parsedData.missing_parts || [],
+              original_response: responseText
+            };
+            
+            console.log(`[BACKEND] ${requestId} - Low confidence score (${confidenceScore}%), will re-ask question ${nextQuestionNumber} with ${partialAnswerData.is_multipart ? 'targeted partial' : 'general'} clarification`);
+            logger.info(`Low confidence response for session: ${sessionId}, question: ${session.currentQuestionNumber}, score: ${confidenceScore}%, multipart: ${partialAnswerData.is_multipart}`);
+          } else {
+            console.log(`[BACKEND] ${requestId} - Good confidence score (${confidenceScore}%), proceeding to next question`);
+          }
+        }
+      } catch (redisError) {
+        console.log(`[BACKEND] ${requestId} - Failed to retrieve confidence score, proceeding normally`);
+      }
+    }
+    
     // Check if we should end the interview
-    if (session.currentQuestionNumber >= 10) {
+    if (!shouldRepeatQuestion && session.currentQuestionNumber >= 10) {
       console.log(`[BACKEND] ${requestId} - Interview completed (question ${session.currentQuestionNumber} >= 10)`);
       session.status = 'completed';
       session.completedAt = new Date();
@@ -433,7 +716,6 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
       });
     }
     
-    const nextQuestionNumber = session.currentQuestionNumber + 1;
     console.log(`[BACKEND] ${requestId} - Next question number will be: ${nextQuestionNumber}`);
     
     // Generate next question using AI
@@ -445,6 +727,8 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
       
       // Get additional responses from Redis
       let redisResponses = [];
+      // Get monitoring events (eye contact, object detection, multiple people)
+      let monitoringEvents = [];
       try {
         const redisClient = getRedisClient();
         if (redisClient) {
@@ -457,6 +741,19 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
       } catch (redisError) {
         console.log(`[BACKEND] ${requestId} - Failed to retrieve responses from Redis:`, redisError.message);
         logger.warn('Failed to retrieve responses from Redis:', redisError.message);
+      }
+
+      try {
+        const redisClient = getRedisClient();
+        if (redisClient) {
+          const monitorKey = `interview:${sessionId}:monitoring`;
+          const monitorData = await redisClient.lRange(monitorKey, 0, -1);
+          monitoringEvents = monitorData.map(d => JSON.parse(d));
+          console.log(`[BACKEND] ${requestId} - Retrieved ${monitoringEvents.length} monitoring events from Redis for session: ${sessionId}`);
+          logger.info(`Retrieved ${monitoringEvents.length} monitoring events from Redis for session: ${sessionId}`);
+        }
+      } catch (monitorErr) {
+        console.log(`[BACKEND] ${requestId} - Failed to retrieve monitoring events from Redis:`, monitorErr.message);
       }
       
       // Combine MongoDB and Redis responses
@@ -487,7 +784,12 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
         role_name: session.roleName,
         question_number: nextQuestionNumber,
         previous_responses: sortedResponses,
-        covered_topics: session.questions.map(q => q.topic).filter(Boolean)
+        covered_topics: session.questions.map(q => q.topic).filter(Boolean),
+        is_clarification_request: shouldRepeatQuestion,
+        original_question: shouldRepeatQuestion ? (session.questions.find(q => q.questionNumber === nextQuestionNumber)?.question || '') : null,
+        partial_answer_data: partialAnswerData // Include partial answer information
+        ,
+        monitoring_events: monitoringEvents
       };
       
       console.log(`[BACKEND] ${requestId} - Sending request to FastAPI AI service`);
@@ -501,30 +803,63 @@ router.post('/generate-next-question', validateGenerateNextQuestion, async (req,
         
         console.log(`[BACKEND] ${requestId} - Using AI-generated question`);
         
-        // Save the AI-generated question
-        session.questions.push({
-          questionNumber: nextQuestionNumber,
-          question: nextQuestion,
-          isAiGenerated: true,
-          topic: aiResponse.data.topic || 'Technical',
-          difficulty: aiResponse.data.difficulty || 'medium'
-        });
+        // Save the AI-generated question (only if not a repeat)
+        if (!shouldRepeatQuestion) {
+          session.questions.push({
+            questionNumber: nextQuestionNumber,
+            question: nextQuestion,
+            isAiGenerated: true,
+            topic: aiResponse.data.topic || 'Technical',
+            difficulty: aiResponse.data.difficulty || 'medium'
+          });
+        } else {
+          // For repeat questions, update the existing question with clarification
+          const existingQuestionIndex = session.questions.findIndex(q => q.questionNumber === nextQuestionNumber);
+          if (existingQuestionIndex !== -1) {
+            session.questions[existingQuestionIndex].question = nextQuestion;
+            session.questions[existingQuestionIndex].clarification_count = (session.questions[existingQuestionIndex].clarification_count || 0) + 1;
+            session.questions[existingQuestionIndex].is_clarification = true;
+          }
+        }
       }
     } catch (aiError) {
       console.log(`[BACKEND] ${requestId} - AI question generation failed:`, aiError.message);
       logger.warn('Failed to generate AI question, using fallback:', aiError.message);
-      // Save fallback question
-      session.questions.push({
-        questionNumber: nextQuestionNumber,
-        question: nextQuestion,
-        isAiGenerated: false,
-        topic: 'General',
-        difficulty: 'medium'
-      });
+      // Save fallback question (only if not a repeat)
+      if (!shouldRepeatQuestion) {
+        session.questions.push({
+          questionNumber: nextQuestionNumber,
+          question: nextQuestion,
+          isAiGenerated: false,
+          topic: 'General',
+          difficulty: 'medium'
+        });
+      } else {
+        // For repeat questions, use targeted clarification for partial answers
+        const existingQuestionIndex = session.questions.findIndex(q => q.questionNumber === nextQuestionNumber);
+        if (existingQuestionIndex !== -1) {
+          const originalQuestion = session.questions[existingQuestionIndex].question;
+          if (partialAnswerData && partialAnswerData.is_multipart && partialAnswerData.missing_parts.length > 0) {
+            // Build a targeted follow-up for missing parts
+            const missingPartsText = partialAnswerData.missing_parts.map((part, idx) => `Part ${idx + 1}: ${part}`).join('\n');
+            nextQuestion = `Let's focus on the parts you missed:\n${missingPartsText}\nPlease answer these specifically.`;
+          } else {
+            nextQuestion = `${originalQuestion}\n\nLet me clarify: Please provide more details about your experience and background. I'm looking for specific examples and more comprehensive information about your skills and interests.`;
+          }
+          session.questions[existingQuestionIndex].question = nextQuestion;
+          session.questions[existingQuestionIndex].clarification_count = (session.questions[existingQuestionIndex].clarification_count || 0) + 1;
+          session.questions[existingQuestionIndex].is_clarification = true;
+        }
+      }
     }
     
-    console.log(`[BACKEND] ${requestId} - Updating session with question ${nextQuestionNumber}`);
-    session.currentQuestionNumber = nextQuestionNumber;
+    console.log(`[BACKEND] ${requestId} - Updating session with question ${nextQuestionNumber}${shouldRepeatQuestion ? ' (clarification)' : ''}`);
+    
+    // Only update currentQuestionNumber if we're not repeating
+    if (!shouldRepeatQuestion) {
+      session.currentQuestionNumber = nextQuestionNumber;
+    }
+    
     await session.save();
     
     const responseData = {

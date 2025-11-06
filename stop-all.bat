@@ -26,6 +26,19 @@ if exist "logging-backend\logs\*.log" del "logging-backend\logs\*.log" /q
 echo Cleanup completed
 
 echo.
+echo [4/4] Closing service terminal windows (if open)...
+REM Close the terminals that were opened by start-all.bat using their window titles
+taskkill /F /FI "WINDOWTITLE eq PrepStart Logging" /IM cmd.exe >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq PrepStart FastAPI" /IM cmd.exe >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq PrepStart Node.js" /IM cmd.exe >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq PrepStart Frontend" /IM cmd.exe >nul 2>&1
+
+REM Also attempt to close common terminal host (Windows Terminal / wt.exe) tabs if used
+taskkill /F /IM wt.exe >nul 2>&1
+
+echo Service terminals closed (if they existed).
+
+echo.
 echo ========================================
 echo All services stopped successfully!
 echo ========================================

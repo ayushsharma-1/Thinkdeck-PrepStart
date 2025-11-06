@@ -65,7 +65,11 @@ class AIService:
         role_name: str,
         question_number: int,
         previous_responses: Optional[List[Dict]] = None,
-        covered_topics: Optional[List[str]] = None
+        covered_topics: Optional[List[str]] = None,
+        is_clarification_request: bool = False,
+        original_question: Optional[str] = None,
+        partial_answer_data: Optional[Dict] = None,
+        monitoring_events: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """Generate question using available AI provider"""
         
@@ -74,6 +78,7 @@ class AIService:
         logger.info(f"AI_SERVICE: Resume length: {len(resume_text) if resume_text else 0} chars")
         logger.info(f"AI_SERVICE: Job description length: {len(job_description) if job_description else 0} chars")
         logger.info(f"AI_SERVICE: Previous responses count: {len(previous_responses) if previous_responses else 0}")
+        logger.info(f"AI_SERVICE: Monitoring events count: {len(monitoring_events) if monitoring_events else 0}")
         logger.info(f"AI_SERVICE: Covered topics: {covered_topics}")
         logger.info(f"AI_SERVICE: Has Groq client: {self.has_groq}")
         logger.info(f"AI_SERVICE: Has Google client: {self.has_google}")
@@ -99,8 +104,9 @@ class AIService:
             try:
                 logger.info("AI_SERVICE: Attempting Groq generation...")
                 result = await self._generate_question_groq(
-                    resume_text, job_description, role_name, 
-                    question_number, previous_responses, covered_topics
+                    resume_text, job_description, role_name,
+                    question_number, previous_responses, covered_topics,
+                    is_clarification_request, original_question, partial_answer_data, monitoring_events
                 )
                 logger.info(f"AI_SERVICE: Groq generation successful for question #{question_number}")
                 logger.info(f"AI_SERVICE: Generated question: {result.get('question', '')[:100]}...")
@@ -115,8 +121,9 @@ class AIService:
             try:
                 logger.info("AI_SERVICE: Attempting Google AI generation...")
                 result = await self._generate_question_google(
-                    resume_text, job_description, role_name, 
-                    question_number, previous_responses, covered_topics
+                    resume_text, job_description, role_name,
+                    question_number, previous_responses, covered_topics,
+                    is_clarification_request, original_question, partial_answer_data, monitoring_events
                 )
                 logger.info(f"AI_SERVICE: Google AI generation successful for question #{question_number}")
                 logger.info(f"AI_SERVICE: Generated question: {result.get('question', '')[:100]}...")
@@ -134,13 +141,17 @@ class AIService:
         return result
 
     async def _generate_question_groq(
-        self, 
-        resume_text: str, 
-        job_description: str, 
+        self,
+        resume_text: str,
+        job_description: str,
         role_name: str,
         question_number: int,
         previous_responses: Optional[List[Dict]] = None,
-        covered_topics: Optional[List[str]] = None
+        covered_topics: Optional[List[str]] = None,
+        is_clarification_request: bool = False,
+        original_question: Optional[str] = None,
+        partial_answer_data: Optional[Dict] = None,
+        monitoring_events: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """Generate question using Groq API"""
         
@@ -152,8 +163,12 @@ class AIService:
         
         logger.info(f"AI_SERVICE: [GROQ] Building prompt for question #{question_number}")
         prompt = self._build_question_prompt(
-            resume_text, job_description, role_name, 
-            question_number, previous_responses, covered_topics
+            resume_text, job_description, role_name,
+            question_number, previous_responses, covered_topics,
+            is_clarification_request=is_clarification_request,
+            original_question=original_question,
+            partial_answer_data=partial_answer_data,
+            monitoring_events=monitoring_events
         )
         
         logger.info(f"AI_SERVICE: [GROQ] Prompt length: {len(prompt)} chars")
@@ -190,13 +205,17 @@ class AIService:
             raise e
 
     async def _generate_question_google(
-        self, 
-        resume_text: str, 
-        job_description: str, 
+        self,
+        resume_text: str,
+        job_description: str,
         role_name: str,
         question_number: int,
         previous_responses: Optional[List[Dict]] = None,
-        covered_topics: Optional[List[str]] = None
+        covered_topics: Optional[List[str]] = None,
+        is_clarification_request: bool = False,
+        original_question: Optional[str] = None,
+        partial_answer_data: Optional[Dict] = None,
+        monitoring_events: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """Generate question using Google AI"""
         
@@ -204,8 +223,12 @@ class AIService:
             raise Exception("Google AI client not available")
         
         prompt = self._build_question_prompt(
-            resume_text, job_description, role_name, 
-            question_number, previous_responses, covered_topics
+            resume_text, job_description, role_name,
+            question_number, previous_responses, covered_topics,
+            is_clarification_request=is_clarification_request,
+            original_question=original_question,
+            partial_answer_data=partial_answer_data,
+            monitoring_events=monitoring_events
         )
         
         response = self.google_model.generate_content(prompt)
@@ -217,17 +240,21 @@ class AIService:
         return self._parse_question_response(response_text, "google")
 
     def _build_question_prompt(
-        self, 
-        resume_text: str, 
-        job_description: str, 
+        self,
+        resume_text: str,
+        job_description: str,
         role_name: str,
         question_number: int,
         previous_responses: Optional[List[Dict]] = None,
-        covered_topics: Optional[List[str]] = None
+        covered_topics: Optional[List[str]] = None,
+        is_clarification_request: bool = False,
+        original_question: Optional[str] = None,
+        partial_answer_data: Optional[Dict] = None,
+        monitoring_events: Optional[List[Dict]] = None
     ) -> str:
-        """Build prompt for question generation"""
-        
-        # Handle first question as introduction
+        """Build prompt for question generation with clarification support"""
+
+        # Handle first question as introduction (keep original strict rules)
         if question_number == 1:
             prompt = f"""
 You are conducting a REMOTE VIDEO interview for the {role_name} position.
@@ -249,43 +276,81 @@ IMPORTANT: Do not use any forbidden words. This is a REMOTE video interview.
 Generate ONLY the question, no additional text.
 """
         else:
-            # For subsequent questions, use resume + job description pattern
+            # Build a brief previous responses summary for context
             previous_context = ""
             if previous_responses:
                 previous_context = "\nPREVIOUS RESPONSES SUMMARY:\n"
                 for resp in previous_responses[-2:]:  # Last 2 responses for context
                     previous_context += f"Q{resp.get('question_number', '')}: {resp.get('response', '')[:200]}...\n"
-            
-            prompt = f"""
-You are an experienced technical interviewer. Based on the candidate's resume, job description, and their previous responses, generate the next interview question.
+
+            # Build a short monitoring summary if events are available
+            monitoring_summary = ""
+            if monitoring_events:
+                try:
+                    recent = monitoring_events[-3:]
+                    monitoring_summary = "\nMONITORING EVENTS (recent):\n"
+                    for ev in recent:
+                        et = ev.get('event_type', 'event')
+                        details = ev.get('details', {})
+                        monitoring_summary += f"- {et}: {details}\n"
+                except Exception:
+                    monitoring_summary = ""
+
+            # Clarification flow: when repeating, change format and/or target missing parts
+            if is_clarification_request:
+                # If we have partial answer analysis, ask targeted prompts for missing parts
+                if partial_answer_data and partial_answer_data.get('is_multipart') and partial_answer_data.get('missing_parts'):
+                    missing_list = '\n'.join([f"- {p}" for p in partial_answer_data.get('missing_parts', [])])
+                    prompt = (
+                        f"You are an experienced interviewer. The candidate was previously asked:\n\"{original_question or 'Original question not provided'}\"\n\n"
+                        f"The candidate's answer covered only some parts. Generate a concise follow-up consisting of short, numbered prompts that request only the missing parts (do NOT repeat parts already answered).\n\n"
+                        f"MISSING PARTS:\n{missing_list}\n\n"
+                        f"ROLE: {role_name}\n\n"
+                        f"CONTEXT (brief resume preview):\n{(resume_text[:1000] + '...') if resume_text else 'No resume provided.'}\n\n"
+                        f"{monitoring_summary or ''}\n"
+                        "INSTRUCTIONS:\n- Produce 1-3 short, numbered prompts focused on the missing parts.\n"
+                        "- Each prompt should request a concrete example, tools used, timeline, and outcome where relevant.\n"
+                        "- Keep language direct and answerable aloud.\n"
+                    )
+                else:
+                    # Generic clarification: rephrase and change format to elicit detail
+                    prompt = (
+                        f"You are an experienced interviewer. The previous question was:\n\"{original_question or 'Original question not provided'}\"\n\n"
+                        "The candidate's answer was insufficient. Provide 1-2 concise, differently phrased prompts that ask for depth and specific examples (e.g., \"Give a specific example when...\", \"What tools did you use and what was the outcome?\"). Use numbered bullets.\n\n"
+                        f"ROLE: {role_name}\n\n"
+                        f"CONTEXT (brief resume preview):\n{(resume_text[:1000] + '...') if resume_text else 'No resume provided.'}\n\n"
+                        f"{monitoring_summary or ''}\n"
+                        "INSTRUCTIONS:\n- Produce 1-2 short, specific prompts that encourage depth and examples.\n"
+                        "- Avoid repeating the exact original wording; change phrasing and format.\n"
+                    )
+            else:
+                # Standard generation: be specific and avoid generic questions
+                prompt = f"""
+You are an expert interviewer. Based on the candidate's resume, job description, and previous responses, generate the next interview question that is specific, relevant, and avoids generic wording.
 
 ROLE: {role_name}
 QUESTION NUMBER: {question_number}
 
-CANDIDATE'S RESUME:
-{resume_text[:2000]}
+CANDIDATE RESUME (summary):
+{(resume_text[:1500] + '...') if resume_text else 'No resume provided.'}
 
-JOB DESCRIPTION & REQUIREMENTS:
-{job_description[:1500]}
+JOB DESCRIPTION (summary):
+{(job_description[:1200] + '...') if job_description else 'No job description provided.'}
+
+PREVIOUS RESPONSES (recent):
 {previous_context}
+COVERAGE_MONITORING:{monitoring_summary if monitoring_summary else '\n'}
 
-COVERED TOPICS: {', '.join(covered_topics) if covered_topics else "None yet"}
+COVERED TOPICS: {', '.join(covered_topics) if covered_topics else 'None yet'}
 
-Generate a relevant interview question that:
-1. Builds on their resume/experience mentioned
-2. Tests skills required for this specific job
-3. Is progressive in difficulty (early questions easier, later ones harder)
-4. Avoids repeating covered topics
-5. Sounds natural like a real interviewer would ask
-
-IMPORTANT: 
-- For questions 2-5: Focus on their background, experience, and basic technical concepts
-- For questions 6-10: Dive deeper into technical skills and problem-solving
-- For questions 11+: Advanced scenarios, system design, leadership questions
-
-Format your response as just the question, naturally phrased as an interviewer would ask.
+INSTRUCTIONS:
+- Generate one focused interview question tailored to the role and candidate background.
+- Prefer behavior/experience-based prompts when the resume indicates relevant projects or technologies.
+- If the role is technical, include a short, concrete coding/system-design or problem-solving prompt; if non-technical, favor behavioral/product/process prompts.
+- Keep the question concise (1-2 sentences) and avoid generic phrases like "Tell me about yourself." 
+- Output only the question (no explanation).
 """
-        
+
         return prompt
 
     def _parse_question_response(self, response_text: str, provider: str) -> Dict[str, Any]:

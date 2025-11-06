@@ -33,6 +33,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import MonitorStream from './ui/MonitorStream';
 import { 
   Mic, 
   MicOff, 
@@ -93,6 +94,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [isInitialized, setIsInitialized] = useState(false);
   const [isQuestionLoaded, setIsQuestionLoaded] = useState(false);
+  const [monitorFrameUrl, setMonitorFrameUrl] = useState(null);
   
   // Refs for media handling
   const userVideoRef = useRef(null);
@@ -127,6 +129,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
   const MAX_RECORDING_TIME = 120000; // 2 minutes max recording
   const API_BASE_URL = 'http://localhost:5000';
   const FASTAPI_BASE_URL = 'http://localhost:8000';
+  const MONITOR_STREAM_URL = process.env.NEXT_PUBLIC_MONITOR_STREAM_URL || 'http://localhost:8001/stream';
 
   // Initialize socket connection and interview session
   useEffect(() => {
@@ -280,9 +283,20 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       setInitializationStep('Setting up camera and microphone...');
       await new Promise(resolve => setTimeout(resolve, 1000)); // Give user time to read
       
-      // Initialize video stream
-      console.log('📹 Initializing user video...');
-      await initializeUserVideo();
+      // Initialize video stream only if PreStart checked camera and flagged opening on start
+      try {
+        const openCamera = sessionStorage.getItem('openCameraOnInterviewStart') === 'true';
+        if (openCamera) {
+          console.log('📹 Initializing user video (flag present)...');
+          await initializeUserVideo();
+        } else {
+          console.log('📹 Skipping automatic camera open; will wait until interview start or user action');
+        }
+      } catch (e) {
+        console.warn('Could not read sessionStorage flag for camera start:', e);
+        // fallback to opening camera
+        await initializeUserVideo();
+      }
       
       setInitializationStep('Configuring audio settings...');
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -325,9 +339,16 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       if (userVideoRef.current) {
         userVideoRef.current.srcObject = stream;
         
-        // Wait for the video to be ready
+        // Wait for the video to be ready and attempt to play (some browsers require explicit play)
         await new Promise((resolve) => {
-          userVideoRef.current.onloadedmetadata = resolve;
+          userVideoRef.current.onloadedmetadata = () => {
+            try {
+              userVideoRef.current.play().catch(err => console.warn('Autoplay play() rejected:', err));
+            } catch (e) {
+              console.warn('Error calling play on video element:', e);
+            }
+            resolve();
+          };
         });
       }
       
@@ -364,6 +385,55 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
       toast.error('Audio processing initialization failed');
     }
   };
+
+  // Capture periodic thumbnails from the user's video and optionally POST to server
+  useEffect(() => {
+    let intervalId = null;
+    const captureAndSend = async () => {
+      try {
+        const video = userVideoRef.current;
+        if (!video || !video.srcObject) return;
+
+        const width = 320;
+        const height = Math.round((video.videoHeight / video.videoWidth) * width) || 180;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+
+        // Update local monitor overlay immediately
+        setMonitorFrameUrl(dataUrl);
+
+        // Send base64 (without header) to backend for server-side processing
+        const base64 = dataUrl.split(',')[1];
+        try {
+          await axios.post(`${API_BASE_URL}/api/monitoring-frame`, {
+            sessionId,
+            image_base64: base64,
+            timestamp: new Date().toISOString()
+          }, { timeout: 3000 });
+        } catch (err) {
+          // non-fatal
+          // console.warn('Failed to post monitoring frame:', err?.message || err);
+        }
+      } catch (err) {
+        // ignore capture errors
+      }
+    };
+
+    if (isInterviewActive) {
+      // start capturing every 2s
+      intervalId = setInterval(captureAndSend, 2000);
+      // capture once immediately
+      captureAndSend();
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [isInterviewActive, sessionId]);
 
   const monitorAudioLevels = () => {
     if (!analyserRef.current) return;
@@ -1591,8 +1661,13 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
                 ref={userVideoRef}
                 autoPlay
                 muted
+                playsInline
+                // ensure video is visible and plays on most browsers
+                onLoadedMetadata={() => { try { userVideoRef.current?.play(); } catch (e) { console.warn('Video play failed:', e); } }}
                 className="w-full h-full object-cover"
               />
+              {/* Optional monitoring agent stream (local MJPEG served by monitoring_agent.py) */}
+              <MonitorStream url={monitorFrameUrl || MONITOR_STREAM_URL} className="absolute top-3 right-3 w-48 h-32 z-20" />
               
               {!isVideoOn && (
                 <div className="absolute inset-0 bg-gradient-to-br from-gray-600 to-gray-800 flex items-center justify-center">

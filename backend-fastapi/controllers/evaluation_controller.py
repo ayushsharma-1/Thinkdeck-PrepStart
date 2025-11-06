@@ -100,6 +100,207 @@ async def evaluate_interview(request: EvaluationRequest):
             error=str(e)
         )
 
+@router.post("/evaluate-response-confidence")
+@handle_exceptions
+async def evaluate_response_confidence(request: Dict[str, Any]):
+    """Evaluate confidence/quality of a single response with partial answer detection"""
+    
+    question = request.get("question", "")
+    response = request.get("response", "")
+    role_name = request.get("role_name", "")
+    topic = request.get("topic", "General")
+    
+    logger.info(f"Evaluating response confidence for role: {role_name}, topic: {topic}")
+    
+    try:
+        # Enhanced evaluation prompt with multi-part question analysis
+        evaluation_prompt = f"""
+        Analyze this interview response and provide a detailed evaluation.
+        
+        Question: {question}
+        Response: {response}
+        Role: {role_name}
+        Topic: {topic}
+        
+        ANALYSIS TASKS:
+        1. Identify if this question has multiple parts (e.g., "Tell me about X and Y", "What is A and how does B work?", "Describe both C and D")
+        2. If multi-part, determine which parts were answered and which were missed
+        3. Evaluate overall response quality on a scale of 0-100
+        
+        FORMAT YOUR RESPONSE AS:
+        SCORE: [0-100]
+        IS_MULTIPART: [true/false]
+        PARTS_IDENTIFIED: [list the question parts if multipart, or "single" if not]
+        ANSWERED_PARTS: [which parts were addressed in the response]
+        MISSING_PARTS: [which parts were not addressed, or "none" if all covered]
+        REASONING: [brief explanation]
+        
+        SCORING CRITERIA:
+        - Complete answers to all parts: 60-100 based on quality
+        - Partial answers (missing significant parts): 30-59
+        - Poor/irrelevant answers: 0-29
+        
+        If the response only addresses some parts of a multi-part question, the score should be 30-59 to trigger clarification.
+        """
+        
+        # Call AI service for evaluation
+        ai_response = await ai_service.get_completion(evaluation_prompt)
+        
+        if ai_response and ai_response.get('success'):
+            content = ai_response.get('content', '').strip()
+            
+            # Parse the structured response
+            import re
+            parsed_evaluation = parse_multipart_evaluation(content)
+            
+            # Ensure score is within bounds
+            confidence_score = max(0, min(100, parsed_evaluation.get('score', 50)))
+            
+            logger.info(f"AI confidence evaluation: {confidence_score}% for response length: {len(response)}")
+            
+            return {
+                "success": True,
+                "confidence_score": confidence_score,
+                "reasoning": parsed_evaluation.get('reasoning', content),
+                "evaluation_method": "ai_based",
+                "is_multipart": parsed_evaluation.get('is_multipart', False),
+                "parts_identified": parsed_evaluation.get('parts_identified', []),
+                "answered_parts": parsed_evaluation.get('answered_parts', []),
+                "missing_parts": parsed_evaluation.get('missing_parts', [])
+            }
+        else:
+            raise Exception("AI evaluation failed")
+            
+    except Exception as e:
+        logger.warning(f"AI confidence evaluation failed: {str(e)}")
+        
+        # Fallback to rule-based evaluation
+        confidence_score = calculate_basic_confidence_score(question, response, topic, role_name)
+        
+        return {
+            "success": True,
+            "confidence_score": confidence_score,
+            "reasoning": "Fallback rule-based evaluation used",
+            "evaluation_method": "rule_based",
+            "is_multipart": False,
+            "parts_identified": [],
+            "answered_parts": [],
+            "missing_parts": []
+        }
+
+def parse_multipart_evaluation(content: str) -> Dict[str, Any]:
+    """Parse the structured AI evaluation response"""
+    import re
+    
+    result = {
+        'score': 50,
+        'is_multipart': False,
+        'parts_identified': [],
+        'answered_parts': [],
+        'missing_parts': [],
+        'reasoning': content
+    }
+    
+    try:
+        # Extract score
+        score_match = re.search(r'SCORE:\s*(\d+)', content, re.IGNORECASE)
+        if score_match:
+            result['score'] = int(score_match.group(1))
+        
+        # Extract multipart flag
+        multipart_match = re.search(r'IS_MULTIPART:\s*(true|false)', content, re.IGNORECASE)
+        if multipart_match:
+            result['is_multipart'] = multipart_match.group(1).lower() == 'true'
+        
+        # Extract parts identified
+        parts_match = re.search(r'PARTS_IDENTIFIED:\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+        if parts_match:
+            parts_text = parts_match.group(1).strip()
+            if parts_text and parts_text.lower() != 'single':
+                result['parts_identified'] = [p.strip().strip('"\'') for p in parts_text.split(',') if p.strip()]
+        
+        # Extract answered parts
+        answered_match = re.search(r'ANSWERED_PARTS:\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+        if answered_match:
+            answered_text = answered_match.group(1).strip()
+            if answered_text and answered_text.lower() != 'none':
+                result['answered_parts'] = [p.strip().strip('"\'') for p in answered_text.split(',') if p.strip()]
+        
+        # Extract missing parts
+        missing_match = re.search(r'MISSING_PARTS:\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+        if missing_match:
+            missing_text = missing_match.group(1).strip()
+            if missing_text and missing_text.lower() != 'none':
+                result['missing_parts'] = [p.strip().strip('"\'') for p in missing_text.split(',') if p.strip()]
+        
+        # Extract reasoning
+        reasoning_match = re.search(r'REASONING:\s*(.*?)(?=\n\S|\Z)', content, re.IGNORECASE | re.DOTALL)
+        if reasoning_match:
+            result['reasoning'] = reasoning_match.group(1).strip()
+            
+    except Exception as e:
+        logger.warning(f"Failed to parse multipart evaluation: {str(e)}")
+    
+    return result
+
+def calculate_basic_confidence_score(question: str, response: str, topic: str, role_name: str) -> int:
+    """Fallback confidence scoring based on response characteristics"""
+    score = 50  # Base score
+    
+    # Length-based scoring
+    word_count = len(response.strip().split())
+    if word_count < 5:
+        score -= 30
+    elif word_count < 10:
+        score -= 10
+    elif word_count > 20:
+        score += 10
+    elif word_count > 50:
+        score += 20
+    
+    # Content quality indicators
+    lower_response = response.lower()
+    
+    # Positive indicators
+    if 'experience' in lower_response:
+        score += 10
+    if 'project' in lower_response:
+        score += 10
+    if 'skill' in lower_response:
+        score += 10
+    if 'learn' in lower_response:
+        score += 5
+    if 'challenge' in lower_response:
+        score += 5
+    
+    # Topic-specific scoring
+    if topic.lower() == 'general':
+        if 'myself' in lower_response or 'background' in lower_response:
+            score += 15
+        if 'interested' in lower_response or 'passion' in lower_response:
+            score += 10
+    
+    # Role-specific keywords for AI/ML
+    if 'ai' in role_name.lower() or 'ml' in role_name.lower():
+        if any(keyword in lower_response for keyword in ['machine learning', 'ai', 'data', 'algorithm', 'model']):
+            score += 15
+    
+    # Negative indicators
+    if len(response) < 20:
+        score -= 20
+    if response == response.lower():  # No capitalization
+        score -= 5
+    if not any(punct in response for punct in '.!?'):
+        score -= 5
+    
+    # Generic responses
+    generic_phrases = ['i like', 'it is good', 'yes', 'no', 'ok', 'fine']
+    if any(phrase in lower_response for phrase in generic_phrases) and word_count < 10:
+        score -= 25
+    
+    # Ensure score is within bounds
+    return max(0, min(100, score))
+
 @router.delete("/cleanup-session/{session_id}")
 @handle_exceptions
 async def cleanup_session_data(session_id: str):

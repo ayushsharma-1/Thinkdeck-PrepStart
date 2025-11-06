@@ -27,14 +27,20 @@ class QuestionService:
         role_name: str,
         question_number: int,
         previous_responses: Optional[List[Dict]] = None,
-        covered_topics: Optional[List[str]] = None
+        covered_topics: Optional[List[str]] = None,
+        is_clarification_request: bool = False,
+        original_question: Optional[str] = None,
+        partial_answer_data: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Generate a question using AI providers with fallback"""
         
         previous_responses = previous_responses or []
         covered_topics = covered_topics or []
         
-        logger.info(f"Generating question {question_number} for session {session_id}")
+        if is_clarification_request:
+            logger.info(f"Generating clarification for question {question_number} for session {session_id}")
+        else:
+            logger.info(f"Generating question {question_number} for session {session_id}")
         
         # Try AI service (handles Groq/Google fallback internally)
         try:
@@ -44,7 +50,10 @@ class QuestionService:
                 role_name=role_name,
                 question_number=question_number,
                 previous_responses=previous_responses,
-                covered_topics=covered_topics
+                covered_topics=covered_topics,
+                is_clarification_request=is_clarification_request,
+                original_question=original_question,
+                partial_answer_data=partial_answer_data
             )
             
             logger.info(f"Question generated using AI service for session {session_id}")
