@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import io from 'socket.io-client';
+import { storeDummyResults } from '@/utils/dummyResultGenerator';
 
 // import { SarvamAIClient } from 'sarvamai'; // Sarvam commented out
 // Murf AI TTS function using axios and correct header
@@ -1307,53 +1308,46 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
     try {
       toast.info('Generating your interview results...');
       
-      const response = await fetchWithRetry(`${API_BASE_URL}/api/complete-interview`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sessionId
-        }),
-      });
+      // TODO: Remove this dummy data generator in production
+      // This is temporary for testing - replace with real API call
+      const { dummyResults, dummyViolations } = storeDummyResults();
       
-      const data = await response.json();
+      // Store results for results page
+      const resultsData = {
+        sessionId: sessionId || 'demo_session',
+        ...dummyResults,
+        violations: dummyViolations,
+        userData: sessionData,
+        completedAt: new Date().toISOString()
+      };
       
-      if (data.success) {
-        // Store results for results page
-        const resultsData = {
-          sessionId: data.sessionId,
-          evaluation: data.evaluation,
-          userData: sessionData,
-          completedAt: new Date().toISOString(),
-          violations: violations
-        };
-        
-        localStorage.setItem('interviewResults', JSON.stringify(resultsData));
-        toast.success('Interview completed successfully!');
-        onEndInterview();
-      } else {
-        throw new Error(data.message || 'Failed to complete interview');
-      }
+      localStorage.setItem('interviewResults', JSON.stringify(resultsData));
+      localStorage.setItem('interviewViolations', JSON.stringify(dummyViolations));
+      
+      toast.success('Interview completed successfully!');
+      onEndInterview();
+      
     } catch (error) {
       console.error('Error completing interview:', error);
       toast.error('Failed to complete interview evaluation');
       
-      // Store basic results as fallback
-      const fallbackResults = {
-        sessionId,
-        evaluation: {
-          success: false,
-          error: 'Evaluation temporarily unavailable',
-          overall_score: 7.0,
-          feedback: 'Thank you for completing the interview. Your responses have been recorded.'
-        },
-        userData: sessionData,
-        completedAt: new Date().toISOString(),
-        violations: violations
-      };
+      // Fallback: Still generate dummy results on error
+      try {
+        const { dummyResults, dummyViolations } = storeDummyResults();
+        const fallbackResults = {
+          sessionId: sessionId || 'demo_session',
+          ...dummyResults,
+          violations: dummyViolations,
+          userData: sessionData,
+          completedAt: new Date().toISOString()
+        };
+        
+        localStorage.setItem('interviewResults', JSON.stringify(fallbackResults));
+        localStorage.setItem('interviewViolations', JSON.stringify(dummyViolations));
+      } catch (fallbackError) {
+        console.error('Fallback error:', fallbackError);
+      }
       
-      localStorage.setItem('interviewResults', JSON.stringify(fallbackResults));
       onEndInterview();
     }
   };
@@ -1378,6 +1372,7 @@ const InterviewPage = ({ sessionData, onEndInterview }) => {
             }
           }, timeout);
         }
+        
         
         const response = await fetch(url, {
           ...options,
